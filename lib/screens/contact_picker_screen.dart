@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 
+import '../theme/app_theme.dart';
+import '../ui/common.dart';
+
 /// A person chosen (or typed) in the picker, to seed a new qardan.
 class PickedContact {
   final String name;
@@ -133,10 +136,10 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
 
     // Exact phone-number entry -> use number as both number and label.
     if (_queryLooksLikeNumber) {
-      tiles.add(ListTile(
-        leading: const CircleAvatar(child: Icon(Icons.dialpad)),
-        title: Text('Add to $_query'),
-        subtitle: const Text('Use this number'),
+      tiles.add(_actionTile(
+        icon: Icons.dialpad,
+        title: 'Add to $_query',
+        subtitle: 'Use this number',
         onTap: () => _pick(_query, _query),
       ));
     } else {
@@ -144,10 +147,10 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
       final hasExactName = _all.any(
           (c) => c.displayName.toLowerCase() == _query.toLowerCase());
       if (!hasExactName) {
-        tiles.add(ListTile(
-          leading: const CircleAvatar(child: Icon(Icons.person_add)),
-          title: Text('Add new: "$_query"'),
-          subtitle: const Text('Enter number on the next screen'),
+        tiles.add(_actionTile(
+          icon: Icons.person_add_alt_1,
+          title: 'Add new: “$_query”',
+          subtitle: 'Enter number on the next screen',
           onTap: () => _pick(_query, ''),
         ));
       }
@@ -155,15 +158,29 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
     return tiles;
   }
 
+  Widget _actionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: AppColors.sage,
+        child: Icon(icon, color: AppColors.pine),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+      subtitle: Text(subtitle),
+      onTap: onTap,
+    );
+  }
+
   Widget _contactTile(Contact c) {
     final phone = c.phones.first.number;
     return ListTile(
-      leading: CircleAvatar(
-        child: Text(c.displayName.isNotEmpty
-            ? c.displayName[0].toUpperCase()
-            : '?'),
-      ),
-      title: Text(c.displayName),
+      leading: InitialAvatar(name: c.displayName, radius: 22),
+      title: Text(c.displayName,
+          style: const TextStyle(fontWeight: FontWeight.w600)),
       subtitle: Text(phone),
       onTap: () => _pick(c.displayName, phone),
     );
