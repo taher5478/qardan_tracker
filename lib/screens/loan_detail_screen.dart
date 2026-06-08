@@ -319,7 +319,8 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
                 loan.lastReminderAt == null
                     ? 'Never'
                     : _df.format(DateTime.fromMillisecondsSinceEpoch(
-                        loan.lastReminderAt!)),
+                        loan.lastReminderAt!))),
+            _infoRow('Next reminder', _nextReminderLabel(loan),
                 last: loan.note.trim().isEmpty),
             if (loan.note.trim().isNotEmpty)
               _infoRow('Note', loan.note.trim(), last: true),
@@ -412,6 +413,19 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
         ],
       ),
     );
+  }
+
+  String _nextReminderLabel(Loan loan) {
+    if (loan.reminderIntervalDays == 0) return 'Off';
+    final now = DateTime.now();
+    final next = loan.nextReminderDate(now);
+    if (next == null) return '—';
+    if (!next.isAfter(now)) return 'Due to send now';
+    final waitingForDue = loan.dueDate != null &&
+        loan.lastReminderAt == null &&
+        now.isBefore(loan.dueDate!);
+    final label = _df.format(next);
+    return waitingForDue ? '$label · on due date' : label;
   }
 
   Widget _card(Widget child) => Container(

@@ -3,6 +3,7 @@ import 'package:workmanager/workmanager.dart';
 import '../constants.dart';
 import '../db/database_helper.dart';
 import '../models/reminder_log.dart';
+import 'drive_backup_service.dart';
 import 'notification_service.dart';
 import 'settings_service.dart';
 import 'sms_service.dart';
@@ -27,6 +28,10 @@ Future<void> runReminderSweep() async {
   // before composing any message.
   await AppSettings.instance.ensureLoaded();
   await NotificationService.init();
+
+  // Best-effort daily Drive backup (may be a no-op in a headless isolate; the
+  // on-open path is the dependable one).
+  await DriveBackupService().maybeDailyBackup();
 
   final db = DatabaseHelper.instance;
   final sms = SmsService();

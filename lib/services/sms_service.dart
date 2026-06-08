@@ -2,6 +2,8 @@ import 'package:another_telephony/telephony.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../constants.dart';
+import '../db/database_helper.dart';
 import '../models/loan.dart';
 import '../ui/common.dart';
 import 'settings_service.dart';
@@ -23,7 +25,7 @@ class SmsService {
     String? template,
     String? businessName,
   }) {
-    template ??= AppSettings.instance.smsTemplate;
+    template ??= kDefaultSmsTemplate;
     businessName ??= AppSettings.instance.businessName;
     final now = DateTime.now();
     final overdue = loan.daysOverdue(now);
@@ -46,7 +48,8 @@ class SmsService {
 
     var out = template;
     values.forEach((key, value) => out = out.replaceAll(key, value));
-    return out.trim();
+    // App attribution + download link, appended to every reminder.
+    return '${out.trim()}$kSmsFooter';
   }
 
   /// Silent check (no prompt) — true if SEND_SMS is currently granted.
@@ -61,11 +64,15 @@ class SmsService {
     final granted = await _telephony.requestSmsPermissions ?? false;
     if (!granted) return false;
 
+    // Resolve the customer's assigned template (falls back to the default).
+    final body =
+        await DatabaseHelper.instance.resolveTemplateBody(loan.templateId);
+
     try {
       // Multipart handles any length / Unicode without the platform dropping it.
       await _telephony.sendSms(
         to: loan.phoneNumber,
-        message: render(loan),
+        message: render(loan, template: body),
         isMultipart: true,
       );
       return true;

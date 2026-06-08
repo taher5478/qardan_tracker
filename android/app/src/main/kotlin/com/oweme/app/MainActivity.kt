@@ -1,4 +1,4 @@
-package com.qardan.qardan_tracker
+package com.oweme.app
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

@@ -1,10 +1,12 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../constants.dart';
 import '../models/customer.dart';
 import '../models/loan.dart';
 import '../models/payment.dart';
 import '../models/reminder_log.dart';
+import '../models/sms_template.dart';
 
 /// Single SQLite gateway. Also opened from the WorkManager background isolate,
 /// so it must not depend on any Flutter UI state.
@@ -18,12 +20,13 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
 
   static const _dbName = 'qardan_tracker.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   static const customers = 'customers';
   static const loans = 'loans';
   static const payments = 'payments';
   static const logTable = 'reminder_log';
+  static const templates = 'sms_templates';
 
   Database? _db;
 
@@ -46,10 +49,30 @@ class DatabaseHelper {
   // --- Schema ---------------------------------------------------------------
 
   Future<void> _onCreate(Database db, int version) async {
+    await _createTemplates(db);
+    await _seedTemplates(db);
     await _createCustomers(db);
     await _createLoans(db);
     await _createPayments(db);
     await _createLog(db);
+  }
+
+  Future<void> _createTemplates(DatabaseExecutor db) => db.execute('''
+        CREATE TABLE $templates (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          body TEXT NOT NULL,
+          isDefault INTEGER NOT NULL DEFAULT 0
+        )''');
+
+  Future<void> _seedTemplates(DatabaseExecutor db) async {
+    for (var i = 0; i < kSeedTemplates.length; i++) {
+      await db.insert(templates, {
+        'name': kSeedTemplates[i]['name'],
+        'body': kSeedTemplates[i]['body'],
+        'isDefault': i == 0 ? 1 : 0, // first preset is the default
+      });
+    }
   }
 
   Future<void> _createCustomers(DatabaseExecutor db) => db.execute('''
@@ -58,7 +81,8 @@ class DatabaseHelper {
           name TEXT NOT NULL,
           phone TEXT NOT NULL,
           note TEXT NOT NULL DEFAULT '',
-          createdAt INTEGER NOT NULL
+          createdAt INTEGER NOT NULL,
+          templateId INTEGER
         )''');
 
   Future<void> _createLoans(DatabaseExecutor db) => db.execute('''
@@ -102,7 +126,17 @@ class DatabaseHelper {
       await _createLog(db);
     }
     if (oldVersion < 3) {
+      // This rebuilds `customers` using the current schema (templateId included).
       await _migrateToRelational(db);
+    }
+    if (oldVersion < 4) {
+      await _createTemplates(db);
+      await _seedTemplates(db);
+      // Only a DB already at exactly v3 has a customers table without the
+      // templateId column; the <3 path created it with the column already.
+      if (oldVersion == 3) {
+        await db.execute('ALTER TABLE $customers ADD COLUMN templateId INTEGER');
+      }
     }
   }
 
@@ -235,6 +269,7 @@ class DatabaseHelper {
   /// name/phone. Used everywhere a loan is read for display.
   static const _loanSelect = '''
       SELECT l.*, c.name AS customerName, c.phone AS customerPhone,
+        c.templateId AS templateId,
         IFNULL((SELECT SUM(p.amount) FROM payments p WHERE p.loanId = l.id), 0)
           AS amountPaid
       FROM loans l JOIN customers c ON c.id = l.customerId''';
@@ -343,12 +378,75 @@ class DatabaseHelper {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  // --- SMS templates --------------------------------------------------------
+
+  Future<List<SmsTemplate>> getTemplates() async {
+    final db = await database;
+    final rows = await db.query(templates, orderBy: 'isDefault DESC, name');
+    return rows.map(SmsTemplate.fromMap).toList();
+  }
+
+  Future<SmsTemplate?> getTemplate(int id) async {
+    final db = await database;
+    final rows = await db.query(templates, where: 'id = ?', whereArgs: [id]);
+    return rows.isEmpty ? null : SmsTemplate.fromMap(rows.first);
+  }
+
+  Future<SmsTemplate?> getDefaultTemplate() async {
+    final db = await database;
+    final rows =
+        await db.query(templates, where: 'isDefault = 1', limit: 1);
+    return rows.isEmpty ? null : SmsTemplate.fromMap(rows.first);
+  }
+
+  Future<int> insertTemplate(SmsTemplate t) async {
+    final db = await database;
+    return db.insert(templates, t.toMap()..remove('id'));
+  }
+
+  Future<void> updateTemplate(SmsTemplate t) async {
+    final db = await database;
+    await db.update(templates, {'name': t.name, 'body': t.body},
+        where: 'id = ?', whereArgs: [t.id]);
+  }
+
+  /// Delete a template; any customer using it falls back to the default.
+  Future<void> deleteTemplate(int id) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.update(customers, {'templateId': null},
+          where: 'templateId = ?', whereArgs: [id]);
+      await txn.delete(templates, where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  Future<void> setDefaultTemplate(int id) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.update(templates, {'isDefault': 0});
+      await txn.update(templates, {'isDefault': 1},
+          where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  /// Resolve the message body to use: the customer's template, else the
+  /// default template, else the hard-coded fallback.
+  Future<String> resolveTemplateBody(int? templateId) async {
+    if (templateId != null) {
+      final t = await getTemplate(templateId);
+      if (t != null) return t.body;
+    }
+    final def = await getDefaultTemplate();
+    return def?.body ?? kDefaultSmsTemplate;
+  }
+
   // --- Backup / restore -----------------------------------------------------
 
   /// Raw dump of every table, for JSON backup.
   Future<Map<String, List<Map<String, Object?>>>> dumpAll() async {
     final db = await database;
     return {
+      templates: await db.query(templates),
       customers: await db.query(customers),
       loans: await db.query(loans),
       payments: await db.query(payments),
@@ -366,6 +464,7 @@ class DatabaseHelper {
       await txn.delete(payments);
       await txn.delete(loans);
       await txn.delete(customers);
+      await txn.delete(templates);
 
       Future<void> insertAll(String table) async {
         for (final row in (data[table] as List? ?? const [])) {
@@ -373,10 +472,17 @@ class DatabaseHelper {
         }
       }
 
+      await insertAll(templates);
       await insertAll(customers);
       await insertAll(loans);
       await insertAll(payments);
       await insertAll(logTable);
+
+      // Older backups may predate templates — keep at least the defaults.
+      final count = Sqflite.firstIntValue(
+              await txn.rawQuery('SELECT COUNT(*) FROM $templates')) ??
+          0;
+      if (count == 0) await _seedTemplates(txn);
     });
   }
 }

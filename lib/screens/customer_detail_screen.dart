@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../models/loan.dart';
+import '../models/sms_template.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 import 'edit_loan_screen.dart';
@@ -25,6 +26,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
 
   Customer? _customer;
   List<Loan> _loans = const [];
+  List<SmsTemplate> _templates = const [];
   bool _loading = true;
 
   @override
@@ -36,12 +38,59 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
   Future<void> _load() async {
     final customer = await _db.getCustomer(widget.customerId);
     final loans = await _db.getLoansForCustomer(widget.customerId);
+    final templates = await _db.getTemplates();
     if (!mounted) return;
     setState(() {
       _customer = customer;
       _loans = loans;
+      _templates = templates;
       _loading = false;
     });
+  }
+
+  String get _currentTemplateName {
+    final id = _customer?.templateId;
+    if (id == null) return 'Default template';
+    final match = _templates.where((t) => t.id == id);
+    return match.isEmpty ? 'Default template' : match.first.name;
+  }
+
+  Future<void> _pickTemplate() async {
+    final chosen = await showModalBottomSheet<Object?>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Reminder template for this customer',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.star_outline),
+              title: const Text('Use default template'),
+              selected: _customer?.templateId == null,
+              onTap: () => Navigator.pop(ctx, 'default'),
+            ),
+            const Divider(height: 1),
+            for (final t in _templates)
+              ListTile(
+                leading: const Icon(Icons.sms_outlined),
+                title: Text(t.name),
+                selected: _customer?.templateId == t.id,
+                onTap: () => Navigator.pop(ctx, t.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null) return;
+    final c = _customer!;
+    await _db.updateCustomer(chosen == 'default'
+        ? c.copyWith(clearTemplate: true)
+        : c.copyWith(templateId: chosen as int));
+    _load();
   }
 
   double get _totalOutstanding =>
@@ -162,6 +211,42 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                         ? AppColors.success
                         : AppColors.brass)),
           ],
+        ),
+        const SizedBox(height: 20),
+        Material(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          child: InkWell(
+            onTap: _pickTemplate,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppRadius.card),
+                border: Border.all(color: AppColors.hairline),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.sms_outlined, color: AppColors.pine),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Reminder template',
+                            style: TextStyle(
+                                color: AppColors.muted, fontSize: 12)),
+                        Text(_currentTemplateName,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: AppColors.muted),
+                ],
+              ),
+            ),
+          ),
         ),
         const SizedBox(height: 24),
         Text('Credit accounts',

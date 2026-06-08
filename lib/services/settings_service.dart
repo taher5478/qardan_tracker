@@ -21,6 +21,9 @@ class AppSettings {
   static const _kBiometric = 'biometricEnabled';
   static const _kPinHash = 'pinHash';
   static const _kForeground = 'foregroundEnabled';
+  static const _kDriveEnabled = 'driveBackupEnabled';
+  static const _kDriveEmail = 'driveAccountEmail';
+  static const _kDriveLast = 'lastDriveBackup';
 
   SharedPreferences? _prefs;
 
@@ -47,6 +50,15 @@ class AppSettings {
 
   bool get foregroundEnabled => _prefs?.getBool(_kForeground) ?? false;
 
+  bool get driveBackupEnabled => _prefs?.getBool(_kDriveEnabled) ?? false;
+
+  String? get driveAccountEmail => _prefs?.getString(_kDriveEmail);
+
+  DateTime? get lastDriveBackup {
+    final ms = _prefs?.getInt(_kDriveLast);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
   // --- Writes ---------------------------------------------------------------
 
   Future<void> setBusinessName(String v) async =>
@@ -63,6 +75,18 @@ class AppSettings {
 
   Future<void> setForegroundEnabled(bool v) async =>
       _prefs?.setBool(_kForeground, v);
+
+  Future<void> setDriveBackup(bool enabled, String? email) async {
+    await _prefs?.setBool(_kDriveEnabled, enabled);
+    if (email == null) {
+      await _prefs?.remove(_kDriveEmail);
+    } else {
+      await _prefs?.setString(_kDriveEmail, email);
+    }
+  }
+
+  Future<void> setLastDriveBackup(DateTime when) async =>
+      _prefs?.setInt(_kDriveLast, when.millisecondsSinceEpoch);
 
   /// Enabling the lock requires a PIN to already be set.
   Future<void> setLockEnabled(bool v) async => _prefs?.setBool(_kLock, v);

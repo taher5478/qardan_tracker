@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../constants.dart';
-import '../models/loan.dart';
+import 'package:intl/intl.dart';
+
 import '../services/auth_service.dart';
 import '../services/backup_service.dart';
+import '../services/drive_backup_service.dart';
 import '../services/foreground_service.dart';
 import '../services/settings_service.dart';
-import '../services/sms_service.dart';
 import '../theme/app_theme.dart';
+import 'templates_screen.dart';
 
 /// Business configuration, security, and data portability in one place.
 class SettingsScreen extends StatefulWidget {
@@ -21,13 +23,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _settings = AppSettings.instance;
   final _backup = BackupService();
   final _auth = AuthService();
+  final _drive = DriveBackupService();
 
   late final TextEditingController _business =
       TextEditingController(text: _settings.businessName);
   late final TextEditingController _currency =
       TextEditingController(text: _settings.currencySymbol);
-  late final TextEditingController _template =
-      TextEditingController(text: _settings.smsTemplate);
 
   bool _busy = false;
 
@@ -35,26 +36,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _business.dispose();
     _currency.dispose();
-    _template.dispose();
     super.dispose();
   }
-
-  // Sample used for the live SMS preview.
-  Loan get _sampleLoan => Loan(
-        customerId: 0,
-        customerName: 'Ali Khan',
-        customerPhone: '+920000000000',
-        reference: 'INV-102',
-        principal: 5000,
-        amountPaid: 2000,
-        dateGiven: DateTime.now().subtract(const Duration(days: 40)),
-        dueDate: DateTime.now().subtract(const Duration(days: 5)),
-      );
 
   Future<void> _saveBusiness() async {
     await _settings.setBusinessName(_business.text);
     await _settings.setCurrencySymbol(_currency.text);
-    await _settings.setSmsTemplate(_template.text);
     _currency.text = _settings.currencySymbol;
     _snack('Saved');
     setState(() {});
@@ -70,6 +57,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _connectDrive() async {
+    setState(() => _busy = true);
+    final email = await _drive.connect();
+    if (!mounted) return;
+    if (email != null) {
+      _snack('Connected as $email');
+      // Take an immediate first backup so there's something in Drive.
+      await _drive.maybeDailyBackup();
+    } else {
+      _snack('Google sign-in cancelled');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _disconnectDrive() async {
+    await _drive.disconnect();
+    _snack('Google Drive disconnected');
+    setState(() {});
+  }
+
+  Future<void> _driveBackupNow() async {
+    setState(() => _busy = true);
+    final ok = await _drive.backupNow();
+    if (!mounted) return;
+    _snack(ok ? 'Backed up to Google Drive' : 'Drive backup failed — reconnect?');
+    setState(() => _busy = false);
   }
 
   Future<void> _restore() async {
@@ -180,12 +195,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final preview = SmsService.render(
-      _sampleLoan,
-      template: _template.text,
-      businessName: _business.text,
-    );
-
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: AbsorbPointer(
@@ -205,25 +214,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               controller: _currency,
               decoration: const InputDecoration(hintText: kCurrencySymbol),
             ),
-            const SizedBox(height: 22),
-
-            _section('Reminder message'),
-            _label('Template'),
-            TextField(
-              controller: _template,
-              maxLines: 4,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                  hintText: 'Use placeholders like {amount}, {name}…'),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Placeholders: {name} {fullname} {amount} {business} {reference} '
-              '{due} {daysoverdue}',
-              style: TextStyle(color: AppColors.muted, fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            _previewCard(preview),
             const SizedBox(height: 14),
             FilledButton.icon(
               onPressed: _saveBusiness,
@@ -231,6 +221,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               label: const Text('Save settings'),
             ),
             const SizedBox(height: 26),
+
+            _section('Reminder message'),
+            _actionTile(
+              Icons.sms_outlined,
+              'Manage message templates',
+              'Create, edit and choose a default reminder template',
+              () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const TemplatesScreen())),
+            ),
+            const SizedBox(height: 16),
 
             _section('Security'),
             SwitchListTile(
@@ -301,6 +301,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 () => _runBackup(_backup.backupToJson, 'Backup created')),
             _actionTile(Icons.restore_outlined, 'Restore from backup',
                 'Replace all data with a backup file', _restore),
+
+            const SizedBox(height: 20),
+            _section('Google Drive'),
+            if (!_settings.driveBackupEnabled)
+              _actionTile(
+                Icons.cloud_outlined,
+                'Daily backup to Google Drive',
+                'Connect your account to auto-backup once a day',
+                _connectDrive,
+              )
+            else ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(
+                    backgroundColor: AppColors.sage,
+                    child: Icon(Icons.cloud_done, color: AppColors.pine)),
+                title: Text(_settings.driveAccountEmail ?? 'Connected',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Text('Last backup: ${_lastDriveLabel()}'),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _driveBackupNow,
+                      icon: const Icon(Icons.backup_outlined),
+                      label: const Text('Back up now'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  TextButton(
+                    onPressed: _disconnectDrive,
+                    child: const Text('Disconnect'),
+                  ),
+                ],
+              ),
+            ],
+
             if (_busy)
               const Padding(
                 padding: EdgeInsets.only(top: 16),
@@ -310,6 +348,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  String _lastDriveLabel() {
+    final last = _settings.lastDriveBackup;
+    if (last == null) return 'never';
+    return DateFormat('d MMM yyyy · h:mm a').format(last);
   }
 
   Widget _section(String t) => Padding(
@@ -323,28 +367,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Text(t,
             style: const TextStyle(
                 color: AppColors.muted, fontWeight: FontWeight.w600)),
-      );
-
-  Widget _previewCard(String preview) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.sage.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(AppRadius.chip),
-          border: Border.all(color: AppColors.hairline),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Preview',
-                style: TextStyle(
-                    color: AppColors.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 6),
-            Text(preview, style: const TextStyle(height: 1.4)),
-          ],
-        ),
       );
 
   Widget _actionTile(

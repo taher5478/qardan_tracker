@@ -67,5 +67,39 @@ void main() {
       expect(_loan(isActive: false, dateGiven: given).isReminderDue(later),
           false);
     });
+
+    test('stays silent across the entire pre-due window (net-30, weekly)', () {
+      final given = DateTime(2026, 1, 1);
+      final due = DateTime(2026, 1, 31);
+      final loan =
+          _loan(dateGiven: given, dueDate: due, reminderIntervalDays: 7);
+      for (var d = 1; d < 30; d++) {
+        expect(loan.isReminderDue(given.add(Duration(days: d))), false,
+            reason: 'should not fire on day $d (before due day 30)');
+      }
+      expect(loan.isReminderDue(due), true);
+    });
+  });
+
+  group('nextReminderDate — visibility', () {
+    test('first reminder lands on the due date', () {
+      final given = DateTime(2026, 1, 1);
+      final due = DateTime(2026, 1, 31);
+      final loan =
+          _loan(dateGiven: given, dueDate: due, reminderIntervalDays: 7);
+      expect(loan.nextReminderDate(given.add(const Duration(days: 5))), due);
+    });
+
+    test('first reminder is one interval after dateGiven when no due date', () {
+      final given = DateTime(2026, 1, 1);
+      final loan = _loan(dateGiven: given, reminderIntervalDays: 7);
+      expect(loan.nextReminderDate(given),
+          given.add(const Duration(days: 7)));
+    });
+
+    test('null when reminders are off', () {
+      final loan = _loan(reminderIntervalDays: 0);
+      expect(loan.nextReminderDate(DateTime(2026, 6, 1)), isNull);
+    });
   });
 }

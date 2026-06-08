@@ -5,6 +5,7 @@ import 'package:workmanager/workmanager.dart';
 import 'constants.dart';
 import 'screens/home_screen.dart';
 import 'screens/lock_screen.dart';
+import 'services/drive_backup_service.dart';
 import 'services/foreground_service.dart';
 import 'services/notification_service.dart';
 import 'services/reminder_service.dart';
@@ -27,6 +28,10 @@ Future<void> main() async {
   if (AppSettings.instance.foregroundEnabled) {
     await ForegroundReminderService.start();
   }
+
+  // Daily Google Drive backup (once per 24h) — fire-and-forget so it never
+  // blocks startup.
+  DriveBackupService().maybeDailyBackup();
 
   runApp(const QardanApp());
 }

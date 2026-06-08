@@ -7,20 +7,27 @@ class Customer {
   final String note;
   final DateTime createdAt;
 
+  /// Assigned reminder template; null means "use the default template".
+  final int? templateId;
+
   const Customer({
     this.id,
     required this.name,
     required this.phone,
     this.note = '',
     required this.createdAt,
+    this.templateId,
   });
 
+  /// [clearTemplate] forces templateId back to null (copyWith can't set null).
   Customer copyWith({
     int? id,
     String? name,
     String? phone,
     String? note,
     DateTime? createdAt,
+    int? templateId,
+    bool clearTemplate = false,
   }) {
     return Customer(
       id: id ?? this.id,
@@ -28,6 +35,7 @@ class Customer {
       phone: phone ?? this.phone,
       note: note ?? this.note,
       createdAt: createdAt ?? this.createdAt,
+      templateId: clearTemplate ? null : (templateId ?? this.templateId),
     );
   }
 
@@ -37,6 +45,7 @@ class Customer {
         'phone': phone,
         'note': note,
         'createdAt': createdAt.millisecondsSinceEpoch,
+        'templateId': templateId,
       };
 
   factory Customer.fromMap(Map<String, Object?> map) => Customer(
@@ -46,6 +55,7 @@ class Customer {
         note: (map['note'] as String?) ?? '',
         createdAt:
             DateTime.fromMillisecondsSinceEpoch(map['createdAt'] as int),
+        templateId: map['templateId'] as int?,
       );
 
   String get firstName =>

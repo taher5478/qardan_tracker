@@ -20,6 +20,7 @@ class Loan {
   final double amountPaid;
   final String customerName;
   final String customerPhone;
+  final int? templateId; // customer's assigned template (null = default)
 
   const Loan({
     this.id,
@@ -35,6 +36,7 @@ class Loan {
     this.amountPaid = 0,
     this.customerName = '',
     this.customerPhone = '',
+    this.templateId,
   });
 
   double get outstanding =>
@@ -64,15 +66,35 @@ class Loan {
   bool isReminderDue(DateTime now) {
     if (!isActive || reminderIntervalDays <= 0 || isSettled) return false;
 
+    // Hard rule: never chase a customer before the invoice is actually due.
+    if (dueDate != null && now.isBefore(dueDate!)) return false;
+
     final intervalMs = reminderIntervalDays * 24 * 60 * 60 * 1000;
     final hasDueDate = dueDate != null;
     final anchorMs = (dueDate ?? dateGiven).millisecondsSinceEpoch;
 
-    // Baseline = the synthetic "last reminder" used before any real one is sent.
+    // Baseline = the synthetic "last reminder" used before any real one is sent
+    // (so the first reminder lands ON the due date, then repeats every interval).
     final baselineMs = hasDueDate ? anchorMs - intervalMs : anchorMs;
     final lastMs = lastReminderAt ?? baselineMs;
 
     return now.millisecondsSinceEpoch - lastMs >= intervalMs;
+  }
+
+  /// When the next automatic reminder will be sent (for display in the UI), or
+  /// null if reminders are off / the account is settled. Returns [now] when one
+  /// is already due to go out on the next sweep.
+  DateTime? nextReminderDate(DateTime now) {
+    if (!isActive || reminderIntervalDays <= 0 || isSettled) return null;
+    if (isReminderDue(now)) return now;
+
+    final interval = Duration(days: reminderIntervalDays);
+    if (lastReminderAt != null) {
+      return DateTime.fromMillisecondsSinceEpoch(lastReminderAt!).add(interval);
+    }
+    // No reminder sent yet: first one lands on the due date (if set) or one
+    // interval after the date it was given.
+    return dueDate ?? dateGiven.add(interval);
   }
 
   Loan copyWith({
@@ -139,5 +161,6 @@ class Loan {
         amountPaid: (map['amountPaid'] as num?)?.toDouble() ?? 0,
         customerName: (map['customerName'] as String?) ?? '',
         customerPhone: (map['customerPhone'] as String?) ?? '',
+        templateId: map['templateId'] as int?,
       );
 }

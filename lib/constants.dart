@@ -20,3 +20,12 @@ const String kDefaultBusinessName = '';
 const String kDefaultSmsTemplate =
     'Reminder: an amount of {amount} is pending{reference}. '
     'Kindly clear it at your earliest convenience. Thank you.{business}';
+
+/// Download link for the app, appended to every reminder so debtors can get it
+/// too. TODO: replace with the real store/website link when available.
+const String kAppDownloadLink = 'https://oweme.app/download';
+
+/// Footer automatically appended to every outgoing reminder SMS.
+const String kSmsFooter =
+    '\n\nSent via $kAppName. Track & manage your dues — download: '
+    '$kAppDownloadLink';

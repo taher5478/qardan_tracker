@@ -78,6 +78,12 @@ dependencies:
   share_plus: ^10.1.4
   file_picker: ^8.1.6
 
+  # Daily backup to the user's Google Drive
+  google_sign_in: ^6.2.1
+  googleapis: ^13.2.0
+  extension_google_sign_in_as_googleapis_auth: ^2.0.12
+  http: ^1.2.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

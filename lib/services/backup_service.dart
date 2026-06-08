@@ -53,8 +53,9 @@ class BackupService {
     await Share.shareXFiles([XFile(path)], text: 'Qarzan ledger export');
   }
 
-  /// Write a full JSON backup of all tables and share it.
-  Future<void> backupToJson() async {
+  /// Build the full backup as a JSON string (shared by file export and the
+  /// Google Drive uploader).
+  Future<String> buildBackupJson() async {
     final dump = await _db.dumpAll();
     final payload = {
       'app': 'qarzan_tracker',
@@ -62,9 +63,17 @@ class BackupService {
       'createdAt': DateTime.now().toIso8601String(),
       'tables': dump,
     };
-    final json = const JsonEncoder.withIndent('  ').convert(payload);
-    final path = await _writeTemp('qarzan_backup_${_stamp()}.json', json);
-    await Share.shareXFiles([XFile(path)], text: 'Qarzan full backup');
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  /// Suggested backup file name with a timestamp.
+  String backupFileName() => 'oweme_backup_${_stamp()}.json';
+
+  /// Write a full JSON backup of all tables and share it.
+  Future<void> backupToJson() async {
+    final json = await buildBackupJson();
+    final path = await _writeTemp(backupFileName(), json);
+    await Share.shareXFiles([XFile(path)], text: 'OweMe full backup');
   }
 
   /// Let the owner pick a previously made backup and restore it. Returns a
