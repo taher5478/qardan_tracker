@@ -4,6 +4,11 @@
 *.pyc
 *.swp
 .DS_Store
+
+# Google OAuth client secrets (not used by the Android app; never commit)
+client_secret_*.json
+**/*.jks
+key.properties
 .atom/
 .build/
 .buildlog/
