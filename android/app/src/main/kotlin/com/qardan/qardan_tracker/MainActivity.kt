@@ -1,5 +1,6 @@
 package com.qardan.qardan_tracker
 
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 
-class MainActivity : FlutterActivity()
+// local_auth requires a FragmentActivity host for the biometric prompt.
+class MainActivity : FlutterFragmentActivity()

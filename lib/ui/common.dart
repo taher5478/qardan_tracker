@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 
-/// App-wide currency formatter. Change the symbol here once.
-final money = NumberFormat.currency(symbol: 'Rs ', decimalDigits: 0);
+/// App-wide currency formatter. The symbol is read live from settings, so a
+/// business can change it once and every figure in the UI and in SMS messages
+/// updates. (Falls back to the default symbol before settings load.)
+NumberFormat get money => NumberFormat.currency(
+    symbol: '${AppSettings.instance.currencySymbol} ', decimalDigits: 0);
 
 /// A circular avatar showing a person's first initial over a deterministic
 /// warm colour. Used in the list, detail header, picker, and history.

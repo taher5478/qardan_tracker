@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
@@ -85,6 +86,21 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
     Navigator.of(context).pop(PickedContact(name: name, phone: phone));
   }
 
+  /// Re-request contacts access; if the OS won't prompt again (permanently
+  /// denied), send the user straight to app settings.
+  Future<void> _grantContacts() async {
+    final granted = await FlutterContacts.requestPermission(readonly: true);
+    if (granted) {
+      setState(() {
+        _permissionDenied = false;
+        _loading = true;
+      });
+      await _loadContacts();
+    } else {
+      await openAppSettings();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -110,21 +126,51 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
     final manualTiles = _buildManualTiles();
     final results = _filtered;
 
-    if (results.isEmpty && manualTiles.isEmpty) {
-      return Center(
-        child: Text(_permissionDenied
-            ? 'Contacts permission denied.\nType a name or number above to add manually.'
-            : 'No contacts found.\nType a name or number above.'),
-      );
-    }
-
     return ListView(
       children: [
+        if (_permissionDenied) _permissionBanner(),
         ...manualTiles,
         if (manualTiles.isNotEmpty && results.isNotEmpty)
           const Divider(height: 1),
         ...results.map(_contactTile),
+        if (!_permissionDenied && results.isEmpty && manualTiles.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(
+                child: Text('Type a name or number above to add someone.')),
+          ),
       ],
+    );
+  }
+
+  Widget _permissionBanner() {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.sage.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.hairline),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Contacts access is off',
+              style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          const Text(
+            'Turn it on to search your contacts, or just type a name and number '
+            'below to add someone manually.',
+            style: TextStyle(color: AppColors.muted),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _grantContacts,
+            icon: const Icon(Icons.contacts_outlined),
+            label: const Text('Grant contacts access'),
+          ),
+        ],
+      ),
     );
   }
 

@@ -1,29 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../db/database_helper.dart';
-import '../models/loan.dart';
+import '../models/customer.dart';
 import '../services/reminder_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 import 'contact_picker_screen.dart';
+import 'customer_detail_screen.dart';
 import 'edit_loan_screen.dart';
-import 'loan_detail_screen.dart';
 import 'reminder_log_screen.dart';
+import 'settings_screen.dart';
 
-/// Everything the home screen needs, loaded in one pass.
 class _HomeData {
-  final List<Loan> loans;
+  final List<CustomerSummary> customers;
   final int remindersSent;
   final int dueNow;
-  const _HomeData(this.loans, this.remindersSent, this.dueNow);
+  final bool smsGranted;
+  final bool batteryExempt;
+  const _HomeData(this.customers, this.remindersSent, this.dueNow,
+      this.smsGranted, this.batteryExempt);
 
-  double get totalOutstanding => loans
-      .where((l) => l.isActive)
-      .fold<double>(0, (sum, l) => sum + l.outstanding);
+  double get totalOutstanding =>
+      customers.fold<double>(0, (s, c) => s + c.totalOutstanding);
 
-  int get pendingPeople =>
-      loans.where((l) => l.isActive && !l.isSettled).length;
+  int get openCustomers => customers.where((c) => !c.isSettled).length;
+
+  bool get hasWarnings => !smsGranted || !batteryExempt;
 }
 
 class HomeScreen extends StatefulWidget {
@@ -50,14 +54,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<_HomeData> _load() async {
-    final loans = await _db.getAllLoans();
+    final customers = await _db.getCustomerSummaries();
     final sent = await _db.countSentReminders();
     final due = await countDueReminders();
-    return _HomeData(loans, sent, due);
+    final smsGranted = await Permission.sms.isGranted;
+    final batteryExempt = await Permission.ignoreBatteryOptimizations.isGranted;
+    return _HomeData(customers, sent, due, smsGranted, batteryExempt);
   }
 
-  /// GPay-style add flow: pick/type a contact first, then enter the amount.
-  Future<void> _addQardan() async {
+  Future<void> _fixSms() async {
+    final status = await Permission.sms.request();
+    if (status.isPermanentlyDenied) await openAppSettings();
+    _reload();
+  }
+
+  Future<void> _fixBattery() async {
+    final status = await Permission.ignoreBatteryOptimizations.request();
+    if (status.isPermanentlyDenied) await openAppSettings();
+    _reload();
+  }
+
+  Future<void> _addCredit() async {
     final picked = await Navigator.of(context).push<PickedContact>(
       MaterialPageRoute(builder: (_) => const ContactPickerScreen()),
     );
@@ -74,11 +91,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (saved == true) _reload();
   }
 
-  Future<void> _openDetail(Loan loan) async {
-    final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => LoanDetailScreen(loanId: loan.id!)),
+  Future<void> _openCustomer(int customerId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+          builder: (_) => CustomerDetailScreen(customerId: customerId)),
     );
-    if (changed == true) _reload();
+    _reload(); // refresh balances after any change inside
   }
 
   void _openHistory() {
@@ -87,15 +105,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+    _reload(); // currency / template changes may affect figures
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addQardan,
+        onPressed: _addCredit,
         backgroundColor: AppColors.pine,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        label: const Text('Add qardan',
+        label: const Text('Add credit',
             style: TextStyle(fontWeight: FontWeight.w700)),
       ),
       body: SafeArea(
@@ -120,18 +145,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _content(_HomeData data) {
-    final active = data.loans.where((l) => l.isActive && !l.isSettled).toList();
-    final settled =
-        data.loans.where((l) => !l.isActive || l.isSettled).toList();
+    final open = data.customers.where((c) => !c.isSettled).toList();
+    final settled = data.customers.where((c) => c.isSettled).toList();
 
     return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
-        SliverToBoxAdapter(child: _Header(onHistory: _openHistory)),
+        SliverToBoxAdapter(
+            child: _Header(onHistory: _openHistory, onSettings: _openSettings)),
+        if (data.hasWarnings)
+          SliverToBoxAdapter(
+            child: _HealthBanners(
+              smsGranted: data.smsGranted,
+              batteryExempt: data.batteryExempt,
+              onFixSms: _fixSms,
+              onFixBattery: _fixBattery,
+            ),
+          ),
         SliverToBoxAdapter(
           child: _BalanceCard(
             amount: data.totalOutstanding,
-            peopleCount: data.pendingPeople,
+            customerCount: data.openCustomers,
           ).animate().fadeIn(duration: 450.ms).slideY(begin: 0.08, end: 0),
         ),
         SliverToBoxAdapter(
@@ -141,13 +175,13 @@ class _HomeScreenState extends State<HomeScreen> {
             onTap: _openHistory,
           ).animate(delay: 120.ms).fadeIn(duration: 400.ms),
         ),
-        if (data.loans.isEmpty)
+        if (data.customers.isEmpty)
           const SliverFillRemaining(hasScrollBody: false, child: _EmptyState())
         else ...[
-          _sectionHeader('Outstanding', active.length),
-          _loanSliver(active, muted: false),
-          if (settled.isNotEmpty) _sectionHeader('Settled', settled.length),
-          _loanSliver(settled, muted: true),
+          _sectionHeader('Owing', open.length),
+          _customerSliver(open, muted: false),
+          if (settled.isNotEmpty) _sectionHeader('Cleared', settled.length),
+          _customerSliver(settled, muted: true),
           const SliverToBoxAdapter(child: SizedBox(height: 96)),
         ],
       ],
@@ -173,14 +207,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _loanSliver(List<Loan> loans, {required bool muted}) {
+  Widget _customerSliver(List<CustomerSummary> list, {required bool muted}) {
     return SliverList.builder(
-      itemCount: loans.length,
+      itemCount: list.length,
       itemBuilder: (context, i) {
-        final tile = _LoanTile(
-          loan: loans[i],
+        final tile = _CustomerTile(
+          summary: list[i],
           muted: muted,
-          onTap: () => _openDetail(loans[i]),
+          onTap: () => _openCustomer(list[i].customer.id!),
         );
         return tile
             .animate(delay: (40 * i).ms)
@@ -191,30 +225,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Header
-// ---------------------------------------------------------------------------
-
 class _Header extends StatelessWidget {
-  const _Header({required this.onHistory});
+  const _Header({required this.onHistory, required this.onSettings});
   final VoidCallback onHistory;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
+      padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
       child: Row(
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Assalamu Alaikum',
+                Text('Accounts receivable',
                     style: Theme.of(context)
                         .textTheme
                         .bodyMedium
                         ?.copyWith(color: AppColors.muted)),
-                Text('Your Qardan',
+                Text('Your Ledger',
                     style: Theme.of(context).textTheme.headlineSmall),
               ],
             ),
@@ -227,20 +258,119 @@ class _Header extends StatelessWidget {
                 foregroundColor: AppColors.pineDark),
             icon: const Icon(Icons.history),
           ),
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            tooltip: 'Settings',
+            onPressed: onSettings,
+            style: IconButton.styleFrom(
+                backgroundColor: AppColors.sage,
+                foregroundColor: AppColors.pineDark),
+            icon: const Icon(Icons.settings_outlined),
+          ),
         ],
       ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Hero balance card (with subtle geometric motif + count-up)
-// ---------------------------------------------------------------------------
+/// Persistent, actionable warnings shown whenever the reminder system is at
+/// risk: SMS permission revoked, or the app not exempt from battery killing.
+class _HealthBanners extends StatelessWidget {
+  const _HealthBanners({
+    required this.smsGranted,
+    required this.batteryExempt,
+    required this.onFixSms,
+    required this.onFixBattery,
+  });
+  final bool smsGranted;
+  final bool batteryExempt;
+  final VoidCallback onFixSms;
+  final VoidCallback onFixBattery;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        children: [
+          if (!smsGranted)
+            _banner(
+              icon: Icons.sms_failed_outlined,
+              title: 'Reminders can’t be sent',
+              body:
+                  'SMS permission is off, so automatic reminders won’t go out.',
+              action: 'Enable SMS',
+              onTap: onFixSms,
+            ),
+          if (!batteryExempt)
+            _banner(
+              icon: Icons.battery_alert_outlined,
+              title: 'Background reminders may stop',
+              body:
+                  'Allow the app to ignore battery optimization so it can run reliably.',
+              action: 'Allow',
+              onTap: onFixBattery,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _banner({
+    required IconData icon,
+    required String title,
+    required String body,
+    required String action,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBE7DC),
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        border: Border.all(color: AppColors.brass.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.danger),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, color: AppColors.ink)),
+                const SizedBox(height: 2),
+                Text(body,
+                    style:
+                        const TextStyle(color: AppColors.muted, fontSize: 12.5)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            onPressed: onTap,
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.pine,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              textStyle:
+                  const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _BalanceCard extends StatelessWidget {
-  const _BalanceCard({required this.amount, required this.peopleCount});
+  const _BalanceCard({required this.amount, required this.customerCount});
   final double amount;
-  final int peopleCount;
+  final int customerCount;
 
   @override
   Widget build(BuildContext context) {
@@ -272,13 +402,12 @@ class _BalanceCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.volunteer_activism,
+                    const Icon(Icons.account_balance_wallet_outlined,
                         color: Colors.white70, size: 18),
                     const SizedBox(width: 8),
-                    Text('Total outstanding',
+                    Text('Total receivable',
                         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: Colors.white70,
-                            letterSpacing: 0.4)),
+                            color: Colors.white70, letterSpacing: 0.4)),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -294,10 +423,10 @@ class _BalanceCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  peopleCount == 0
-                      ? 'Everyone has repaid — masha’Allah'
-                      : 'Pending with $peopleCount '
-                          '${peopleCount == 1 ? 'person' : 'people'}',
+                  customerCount == 0
+                      ? 'All accounts cleared'
+                      : 'Owed by $customerCount '
+                          '${customerCount == 1 ? 'customer' : 'customers'}',
                   style: const TextStyle(color: Colors.white70),
                 ),
               ],
@@ -309,7 +438,6 @@ class _BalanceCard extends StatelessWidget {
   }
 }
 
-/// Faint concentric arcs in the corner — a quiet geometric nod, not noise.
 class _MotifPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -326,10 +454,6 @@ class _MotifPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-
-// ---------------------------------------------------------------------------
-// Sent / pending stat chips
-// ---------------------------------------------------------------------------
 
 class _StatsRow extends StatelessWidget {
   const _StatsRow(
@@ -413,7 +537,8 @@ class _StatChip extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(value,
-                        style: AppTheme.money(size: 22, weight: FontWeight.w600)),
+                        style:
+                            AppTheme.money(size: 22, weight: FontWeight.w600)),
                     Text(label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -430,23 +555,16 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Loan list tile (with repayment progress)
-// ---------------------------------------------------------------------------
-
-class _LoanTile extends StatelessWidget {
-  const _LoanTile(
-      {required this.loan, required this.muted, required this.onTap});
-  final Loan loan;
+class _CustomerTile extends StatelessWidget {
+  const _CustomerTile(
+      {required this.summary, required this.muted, required this.onTap});
+  final CustomerSummary summary;
   final bool muted;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final progress = loan.principal <= 0
-        ? 0.0
-        : (loan.amountPaid / loan.principal).clamp(0.0, 1.0);
-
+    final c = summary.customer;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       child: Material(
@@ -463,67 +581,58 @@ class _LoanTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(AppRadius.card),
                 border: Border.all(color: AppColors.hairline),
               ),
-              child: Column(
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      InitialAvatar(name: loan.debtorName),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(loan.debtorName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(fontWeight: FontWeight.w700)),
-                            const SizedBox(height: 2),
-                            Text(
-                              muted
-                                  ? 'Settled'
-                                  : (loan.reminderIntervalDays > 0
-                                      ? 'Reminder every ${loan.reminderIntervalDays} day'
-                                          '${loan.reminderIntervalDays == 1 ? '' : 's'}'
-                                      : 'No reminders'),
-                              style: const TextStyle(
-                                  color: AppColors.muted, fontSize: 13),
-                            ),
-                          ],
+                  InitialAvatar(name: c.name),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(c.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 2),
+                        Text(
+                          muted
+                              ? 'Cleared'
+                              : '${summary.openAccounts} '
+                                  'open account${summary.openAccounts == 1 ? '' : 's'}',
+                          style: const TextStyle(
+                              color: AppColors.muted, fontSize: 13),
                         ),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(money.format(loan.outstanding),
-                              style: AppTheme.money(
-                                  size: 19,
-                                  color: muted
-                                      ? AppColors.muted
-                                      : AppColors.brass,
-                                  weight: FontWeight.w600)),
-                          if (!muted && loan.amountPaid > 0)
-                            Text('of ${money.format(loan.principal)}',
-                                style: const TextStyle(
-                                    color: AppColors.muted, fontSize: 12)),
-                        ],
-                      ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(money.format(summary.totalOutstanding),
+                          style: AppTheme.money(
+                              size: 19,
+                              color: muted ? AppColors.muted : AppColors.brass,
+                              weight: FontWeight.w600)),
+                      if (!muted && summary.dueNow > 0)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.brass.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text('${summary.dueNow} due',
+                              style: const TextStyle(
+                                  color: AppColors.brass,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700)),
+                        ),
                     ],
                   ),
-                  if (!muted && loan.amountPaid > 0) ...[
-                    const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: LinearProgressIndicator(
-                        value: progress,
-                        minHeight: 6,
-                        backgroundColor: AppColors.sage,
-                        valueColor: const AlwaysStoppedAnimation(AppColors.pine),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -533,10 +642,6 @@ class _LoanTile extends StatelessWidget {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Empty state
-// ---------------------------------------------------------------------------
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
@@ -552,15 +657,15 @@ class _EmptyState extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             decoration: const BoxDecoration(
                 color: AppColors.sage, shape: BoxShape.circle),
-            child: const Icon(Icons.volunteer_activism,
+            child: const Icon(Icons.receipt_long_outlined,
                 size: 48, color: AppColors.pine),
           ),
           const SizedBox(height: 24),
-          Text('No qardan yet',
+          Text('No credit recorded',
               style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
           const Text(
-            'Record a loan you’ve given and the app will\nremind the person for you, automatically.',
+            'Add credit you’ve extended to a customer and\nthe app will remind them automatically.',
             textAlign: TextAlign.center,
             style: TextStyle(color: AppColors.muted, height: 1.5),
           ),
