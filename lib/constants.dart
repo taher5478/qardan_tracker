@@ -29,3 +29,18 @@ const String kAppDownloadLink = 'https://oweme.app/download';
 const String kSmsFooter =
     '\n\nSent via $kAppName. Track & manage your dues — download: '
     '$kAppDownloadLink';
+
+// --- Licensing (Supabase activation keys) ----------------------------------
+
+/// Length of the app-managed free trial, in days.
+const int kTrialDays = 30;
+
+/// Shown on the activation screen.
+const String kPriceLabel = 'Rs 100 / year';
+
+/// How the user obtains a key from you (shown on the activation screen).
+const String kActivationContact = 'WhatsApp/email us to get your key.';
+
+/// Supabase project that stores and validates activation keys.
+const String kSupabaseUrl = 'https://vghvhzpvcfbqockayipl.supabase.co';
+const String kSupabasePublishableKey = 'sb_publishable_BAOE3hgx8e2CeGwwmgJrKQ_MYy-RVE6';

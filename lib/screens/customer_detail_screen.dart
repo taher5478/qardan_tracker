@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../ui/common.dart';
 import 'edit_loan_screen.dart';
 import 'loan_detail_screen.dart';
+import 'activation_screen.dart';
 
 /// Shows a customer's consolidated account: every credit they hold, the total
 /// balance, and entry points to add credit or open an individual invoice.
@@ -97,6 +98,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       _loans.where((l) => l.isActive).fold(0.0, (s, l) => s + l.outstanding);
 
   Future<void> _addCredit() async {
+    if (!await requireActive(context)) return;
+    if (!mounted) return;
     final c = _customer!;
     final saved = await Navigator.of(context).push<bool>(
       MaterialPageRoute(

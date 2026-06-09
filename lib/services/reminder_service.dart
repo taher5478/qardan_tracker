@@ -4,6 +4,7 @@ import '../constants.dart';
 import '../db/database_helper.dart';
 import '../models/reminder_log.dart';
 import 'drive_backup_service.dart';
+import 'entitlement.dart';
 import 'notification_service.dart';
 import 'settings_service.dart';
 import 'sms_service.dart';
@@ -32,6 +33,16 @@ Future<void> runReminderSweep() async {
   // Best-effort daily Drive backup (may be a no-op in a headless isolate; the
   // on-open path is the dependable one).
   await DriveBackupService().maybeDailyBackup();
+
+  // Paid feature: stop sending once the trial ends without a subscription.
+  if (Entitlement.isLocked) {
+    await NotificationService.show(
+      'Reminders paused',
+      'Your $kAppName free trial has ended. Subscribe to keep sending '
+          'automatic reminders.',
+    );
+    return;
+  }
 
   final db = DatabaseHelper.instance;
   final sms = SmsService();

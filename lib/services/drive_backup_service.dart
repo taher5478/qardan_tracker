@@ -5,6 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 
 import 'backup_service.dart';
+import 'entitlement.dart';
 import 'settings_service.dart';
 
 /// Uploads JSON backups to a visible "OweMe Backups" folder in the user's
@@ -81,6 +82,8 @@ class DriveBackupService {
   /// throws (so it's safe to call on app launch and in the background sweep).
   Future<void> maybeDailyBackup() async {
     final s = AppSettings.instance;
+    // Backup is a paid feature — never run during the free trial.
+    if (!Entitlement.isLicensed) return;
     if (!s.driveBackupEnabled) return;
     final last = s.lastDriveBackup;
     if (last != null &&

@@ -4,12 +4,14 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../db/database_helper.dart';
 import '../models/customer.dart';
+import '../services/entitlement.dart';
 import '../services/reminder_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 import 'contact_picker_screen.dart';
 import 'customer_detail_screen.dart';
 import 'edit_loan_screen.dart';
+import 'activation_screen.dart';
 import 'reminder_log_screen.dart';
 import 'settings_screen.dart';
 
@@ -75,6 +77,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _addCredit() async {
+    if (!await requireActive(context)) return;
+    if (!mounted) return;
     final picked = await Navigator.of(context).push<PickedContact>(
       MaterialPageRoute(builder: (_) => const ContactPickerScreen()),
     );
@@ -103,6 +107,13 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const ReminderLogScreen()),
     );
+  }
+
+  Future<void> _openSubscription() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ActivationScreen()),
+    );
+    _reload();
   }
 
   Future<void> _openSettings() async {
@@ -153,6 +164,14 @@ class _HomeScreenState extends State<HomeScreen> {
       slivers: [
         SliverToBoxAdapter(
             child: _Header(onHistory: _openHistory, onSettings: _openSettings)),
+        if (Entitlement.isLocked || (Entitlement.inTrial && Entitlement.trialDaysLeft <= 7))
+          SliverToBoxAdapter(
+            child: _SubscriptionBanner(
+              locked: Entitlement.isLocked,
+              daysLeft: Entitlement.trialDaysLeft,
+              onTap: _openSubscription,
+            ),
+          ),
         if (data.hasWarnings)
           SliverToBoxAdapter(
             child: _HealthBanners(
@@ -268,6 +287,77 @@ class _Header extends StatelessWidget {
             icon: const Icon(Icons.settings_outlined),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Trial-countdown / paywall banner.
+class _SubscriptionBanner extends StatelessWidget {
+  const _SubscriptionBanner(
+      {required this.locked, required this.daysLeft, required this.onTap});
+  final bool locked;
+  final int daysLeft;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = locked ? AppColors.danger : AppColors.brass;
+    final title = locked
+        ? 'Free trial ended'
+        : 'Trial ends in $daysLeft day${daysLeft == 1 ? '' : 's'}';
+    final body = locked
+        ? 'Subscribe to add credit, record payments and send reminders.'
+        : 'Subscribe any time to keep OweMe after your trial.';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Material(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadius.chip),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.chip),
+              border: Border.all(color: color.withValues(alpha: 0.4)),
+            ),
+            child: Row(
+              children: [
+                Icon(locked ? Icons.lock_outline : Icons.workspace_premium_outlined,
+                    color: color),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, color: AppColors.ink)),
+                      const SizedBox(height: 2),
+                      Text(body,
+                          style: const TextStyle(
+                              color: AppColors.muted, fontSize: 12.5)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: onTap,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.pine,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                  child: const Text('Subscribe'),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

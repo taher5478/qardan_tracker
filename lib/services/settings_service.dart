@@ -24,6 +24,9 @@ class AppSettings {
   static const _kDriveEnabled = 'driveBackupEnabled';
   static const _kDriveEmail = 'driveAccountEmail';
   static const _kDriveLast = 'lastDriveBackup';
+  static const _kTrialStart = 'trialStartMillis';
+  static const _kLicenseUntil = 'licenseValidUntilMillis';
+  static const _kLicenseKey = 'activationKey';
 
   SharedPreferences? _prefs;
 
@@ -87,6 +90,39 @@ class AppSettings {
 
   Future<void> setLastDriveBackup(DateTime when) async =>
       _prefs?.setInt(_kDriveLast, when.millisecondsSinceEpoch);
+
+  // --- Subscription / trial -------------------------------------------------
+
+  /// The day the app-managed free trial began (set once, on first launch).
+  DateTime? get trialStart {
+    final ms = _prefs?.getInt(_kTrialStart);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  /// Records the trial start on first launch if not already set.
+  Future<void> ensureTrialStarted() async {
+    if (_prefs?.getInt(_kTrialStart) == null) {
+      await _prefs?.setInt(_kTrialStart, DateTime.now().millisecondsSinceEpoch);
+    }
+  }
+
+  /// Local cache of the activation-key expiry (from Supabase). Null = no key.
+  DateTime? get licenseValidUntil {
+    final ms = _prefs?.getInt(_kLicenseUntil);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  String? get activationKey => _prefs?.getString(_kLicenseKey);
+
+  Future<void> setLicense(DateTime validUntil, String key) async {
+    await _prefs?.setInt(_kLicenseUntil, validUntil.millisecondsSinceEpoch);
+    await _prefs?.setString(_kLicenseKey, key);
+  }
+
+  Future<void> clearLicense() async {
+    await _prefs?.remove(_kLicenseUntil);
+    await _prefs?.remove(_kLicenseKey);
+  }
 
   /// Enabling the lock requires a PIN to already be set.
   Future<void> setLockEnabled(bool v) async => _prefs?.setBool(_kLock, v);

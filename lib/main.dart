@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'constants.dart';
@@ -7,6 +8,7 @@ import 'screens/home_screen.dart';
 import 'screens/lock_screen.dart';
 import 'services/drive_backup_service.dart';
 import 'services/foreground_service.dart';
+import 'services/license_service.dart';
 import 'services/notification_service.dart';
 import 'services/reminder_service.dart';
 import 'services/settings_service.dart';
@@ -16,8 +18,14 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await AppSettings.instance.ensureLoaded();
+  await AppSettings.instance.ensureTrialStarted(); // start the free-trial clock
   await NotificationService.init();
   ForegroundReminderService.init();
+
+  await Supabase.initialize(
+      url: kSupabaseUrl, publishableKey: kSupabasePublishableKey);
+  // Re-check the stored activation key online (refreshes expiry). Non-blocking.
+  LicenseService.instance.revalidate();
 
   await Workmanager().initialize(callbackDispatcher);
 

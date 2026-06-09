@@ -6,9 +6,11 @@ import 'package:intl/intl.dart';
 import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/drive_backup_service.dart';
+import '../services/entitlement.dart';
 import '../services/foreground_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
+import 'activation_screen.dart';
 import 'templates_screen.dart';
 
 /// Business configuration, security, and data portability in one place.
@@ -48,6 +50,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _runBackup(Future<void> Function() action, String done) async {
+    if (!await requireLicensed(context)) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       await action();
@@ -60,6 +64,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _connectDrive() async {
+    if (!await requireLicensed(context)) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     final email = await _drive.connect();
     if (!mounted) return;
@@ -80,6 +86,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _driveBackupNow() async {
+    if (!await requireLicensed(context)) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     final ok = await _drive.backupNow();
     if (!mounted) return;
@@ -88,6 +96,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _restore() async {
+    if (!await requireLicensed(context)) return;
+    if (!mounted) return;
     final confirmed = await _confirm('Restore backup?',
         'This REPLACES all current data with the contents of the backup file.');
     if (!confirmed) return;
@@ -202,6 +212,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
           children: [
+            _section('Activation'),
+            _actionTile(
+              Icons.workspace_premium_outlined,
+              Entitlement.isLicensed
+                  ? 'Activated'
+                  : Entitlement.inTrial
+                      ? 'Free trial — ${Entitlement.trialDaysLeft} days left'
+                      : 'Trial ended — activate',
+              'Enter an activation key, view status & disclaimers',
+              () async {
+                await Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const ActivationScreen()));
+                if (mounted) setState(() {});
+              },
+            ),
+            const SizedBox(height: 22),
+
             _section('Business'),
             _label('Business name'),
             TextField(
@@ -292,24 +319,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
 
-            _section('Backup & export'),
+            _section(Entitlement.isLicensed
+                ? 'Backup & export'
+                : 'Backup & export · Premium'),
             _actionTile(Icons.table_view_outlined, 'Export ledger (CSV)',
                 'Share a spreadsheet of all accounts',
-                () => _runBackup(_backup.exportLedgerCsv, 'Ledger exported')),
+                () => _runBackup(_backup.exportLedgerCsv, 'Ledger exported'),
+                locked: !Entitlement.isLicensed),
             _actionTile(Icons.backup_outlined, 'Full backup (JSON)',
                 'Save a complete copy you can restore later',
-                () => _runBackup(_backup.backupToJson, 'Backup created')),
+                () => _runBackup(_backup.backupToJson, 'Backup created'),
+                locked: !Entitlement.isLicensed),
             _actionTile(Icons.restore_outlined, 'Restore from backup',
-                'Replace all data with a backup file', _restore),
+                'Replace all data with a backup file', _restore,
+                locked: !Entitlement.isLicensed),
 
             const SizedBox(height: 20),
-            _section('Google Drive'),
+            _section(Entitlement.isLicensed
+                ? 'Google Drive'
+                : 'Google Drive · Premium'),
             if (!_settings.driveBackupEnabled)
               _actionTile(
                 Icons.cloud_outlined,
                 'Daily backup to Google Drive',
                 'Connect your account to auto-backup once a day',
                 _connectDrive,
+                locked: !Entitlement.isLicensed,
               )
             else ...[
               ListTile(
@@ -370,7 +405,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
 
   Widget _actionTile(
-          IconData icon, String title, String subtitle, VoidCallback onTap) =>
+          IconData icon, String title, String subtitle, VoidCallback onTap,
+          {bool locked = false}) =>
       ListTile(
         contentPadding: EdgeInsets.zero,
         leading: CircleAvatar(
@@ -378,6 +414,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Icon(icon, color: AppColors.pine)),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(subtitle),
+        trailing: locked ? const _PremiumBadge() : null,
         onTap: onTap,
       );
+}
+
+/// Small "Premium" pill with a lock icon, shown on subscriber-only tiles.
+class _PremiumBadge extends StatelessWidget {
+  const _PremiumBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.brass.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.lock_outline, size: 13, color: AppColors.brass),
+          SizedBox(width: 4),
+          Text('Premium',
+              style: TextStyle(
+                  color: AppColors.brass,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
 }

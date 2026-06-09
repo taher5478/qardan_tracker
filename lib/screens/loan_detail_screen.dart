@@ -11,6 +11,7 @@ import '../services/sms_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 import 'edit_loan_screen.dart';
+import 'activation_screen.dart';
 
 /// A single credit account: locked principal, an append-only payments ledger,
 /// and the actions to record a payment, send a reminder, edit terms or delete.
@@ -48,6 +49,8 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
   }
 
   Future<void> _recordPayment() async {
+    if (!await requireActive(context)) return;
+    if (!mounted) return;
     final loan = _loan!;
     final amountCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
@@ -107,6 +110,8 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
   }
 
   Future<void> _sendNow() async {
+    if (!await requireActive(context)) return;
+    if (!mounted) return;
     final loan = _loan!;
 
     // Recover gracefully if the OS revoked SMS access.
@@ -168,6 +173,8 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
   }
 
   Future<void> _editTerms() async {
+    if (!await requireActive(context)) return;
+    if (!mounted) return;
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => EditLoanScreen(loan: _loan)),
     );
