@@ -41,17 +41,24 @@ class SubscriptionService {
           .maybeSingle();
 
       final settings = AppSettings.instance;
-      final status = row?['status'] as String?;
-      final endStr = row?['current_period_end'] as String?;
+
+      // No row yet (webhook still pending after a fresh payment) — DON'T clear
+      // the cached entitlement; just wait for the next refresh/poll.
+      if (row == null) return;
+
+      final status = row['status'] as String?;
+      final endStr = row['current_period_end'] as String?;
       final end = endStr == null ? null : DateTime.tryParse(endStr);
 
-      if (status == 'active') {
-        // Active: cache the period end (or a year out if the server omitted it).
-        await settings
-            .setServerSub(end ?? DateTime.now().add(const Duration(days: 366)));
-      } else {
+      if (status == 'active' && end != null) {
+        // Active with a real period end — cache it.
+        await settings.setServerSub(end);
+      } else if (status == 'cancelled' || status == 'expired') {
+        // Only revoke on an explicit terminal status — never on a transient
+        // gap or a missing period end (avoids locking out a paid customer).
         await settings.clearServerSub();
       }
+      // Any other case (active-without-end, unknown/transient): keep last cache.
     } catch (_) {
       // Keep the last cached state when offline.
     }

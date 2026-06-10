@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:workmanager/workmanager.dart';
 
@@ -32,7 +31,7 @@ Future<void> main() async {
 
   await Workmanager().initialize(callbackDispatcher);
 
-  await _ensurePermissions();
+  // Permissions are requested in onboarding (with context), not cold at launch.
   await scheduleReminders();
 
   // Re-start the persistent service if the owner had opted in.
@@ -45,19 +44,6 @@ Future<void> main() async {
   DriveBackupService().maybeDailyBackup();
 
   runApp(const QardanApp());
-}
-
-/// Request SMS, notification, and battery-optimization exemptions up front so
-/// the background sweep can actually send messages.
-Future<void> _ensurePermissions() async {
-  await [
-    Permission.sms,
-    Permission.notification,
-  ].request();
-
-  if (await Permission.ignoreBatteryOptimizations.isDenied) {
-    await Permission.ignoreBatteryOptimizations.request();
-  }
 }
 
 class QardanApp extends StatelessWidget {

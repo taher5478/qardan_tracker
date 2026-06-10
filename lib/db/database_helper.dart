@@ -339,6 +339,28 @@ class DatabaseHelper {
         where: 'id = ?', whereArgs: [loanId]);
   }
 
+  /// Atomically claim a loan for sending: stamps lastReminderAt only if the
+  /// loan is still due (never sent, or interval elapsed). Returns true if THIS
+  /// caller won the claim. Because SQLite UPDATE is atomic and the DB file is
+  /// shared across isolates, this prevents the WorkManager and foreground-
+  /// service sweeps from both sending the same reminder.
+  Future<bool> claimReminder(int loanId, int nowMs, int intervalMs) async {
+    final db = await database;
+    final n = await db.rawUpdate(
+      'UPDATE $loans SET lastReminderAt = ? '
+      'WHERE id = ? AND (lastReminderAt IS NULL OR ? - lastReminderAt >= ?)',
+      [nowMs, loanId, nowMs, intervalMs],
+    );
+    return n == 1;
+  }
+
+  /// Restore a loan's lastReminderAt (used to revert a claim if the send fails).
+  Future<void> setLastReminder(int loanId, int? whenEpochMillis) async {
+    final db = await database;
+    await db.update(loans, {'lastReminderAt': whenEpochMillis},
+        where: 'id = ?', whereArgs: [loanId]);
+  }
+
   // --- Payments (audit trail) ----------------------------------------------
 
   Future<int> insertPayment(Payment p) async {

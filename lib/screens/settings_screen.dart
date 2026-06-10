@@ -52,8 +52,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {});
   }
 
-  Future<void> _runBackup(Future<void> Function() action, String done) async {
-    if (!await requireLicensed(context)) return;
+  Future<void> _runBackup(Future<void> Function() action, String done,
+      {bool premium = true}) async {
+    if (premium && !await requireLicensed(context)) return;
     if (!mounted) return;
     setState(() => _busy = true);
     try {
@@ -96,19 +97,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     _snack(ok ? 'Backed up to Google Drive' : 'Drive backup failed — reconnect?');
     setState(() => _busy = false);
-  }
-
-  Future<void> _restore() async {
-    if (!await requireLicensed(context)) return;
-    if (!mounted) return;
-    final confirmed = await _confirm('Restore backup?',
-        'This REPLACES all current data with the contents of the backup file.');
-    if (!confirmed) return;
-    setState(() => _busy = true);
-    final msg = await _backup.restoreFromJson();
-    if (!mounted) return;
-    setState(() => _busy = false);
-    _snack(msg);
   }
 
   Future<void> _toggleLock(bool enable) async {
@@ -234,25 +222,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {});
   }
 
-  Future<bool> _confirm(String title, String body) async {
-    final r = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Continue')),
-        ],
-      ),
-    );
-    return r ?? false;
-  }
-
   void _snack(String m) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -335,6 +304,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => const TemplatesScreen())),
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Add app link to reminders'),
+              subtitle: Text(Entitlement.isLicensed
+                  ? 'Appends “Get OweMe: $kAppDownloadLink” to each message'
+                  : 'Premium — subscribe to enable'),
+              value: _settings.smsFooterUrlEnabled && Entitlement.isLicensed,
+              activeThumbColor: AppColors.pine,
+              onChanged: Entitlement.isLicensed
+                  ? (v) async {
+                      await _settings.setSmsFooterUrlEnabled(v);
+                      if (mounted) setState(() {});
+                    }
+                  : null,
+            ),
             const SizedBox(height: 16),
 
             _section('Security'),
@@ -397,19 +381,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 12),
 
-            _section(Entitlement.isLicensed
-                ? 'Backup & export'
-                : 'Backup & export · Premium'),
+            _section('Backup & export'),
+            // CSV export is free for everyone (read-only — can't be re-imported,
+            // so it can't be used to game the trial).
             _actionTile(Icons.table_view_outlined, 'Export ledger (CSV)',
-                'Share a spreadsheet of all accounts',
-                () => _runBackup(_backup.exportLedgerCsv, 'Ledger exported'),
-                locked: !Entitlement.isLicensed),
+                'Free — share a spreadsheet of all accounts',
+                () => _runBackup(_backup.exportLedgerCsv, 'Ledger exported',
+                    premium: false)),
+            // Full JSON backup stays subscriber-only. Restore/import is removed
+            // entirely (no in-app way to re-import data).
             _actionTile(Icons.backup_outlined, 'Full backup (JSON)',
-                'Save a complete copy you can restore later',
+                'Save a complete copy of your data',
                 () => _runBackup(_backup.backupToJson, 'Backup created'),
-                locked: !Entitlement.isLicensed),
-            _actionTile(Icons.restore_outlined, 'Restore from backup',
-                'Replace all data with a backup file', _restore,
                 locked: !Entitlement.isLicensed),
 
             const SizedBox(height: 20),

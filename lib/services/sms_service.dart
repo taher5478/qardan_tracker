@@ -6,6 +6,7 @@ import '../constants.dart';
 import '../db/database_helper.dart';
 import '../models/loan.dart';
 import '../ui/common.dart';
+import 'entitlement.dart';
 import 'settings_service.dart';
 
 /// Sends reminder SMS directly (silently) via the device's SMS subsystem.
@@ -48,8 +49,13 @@ class SmsService {
 
     var out = template;
     values.forEach((key, value) => out = out.replaceAll(key, value));
-    // App attribution + download link, appended to every reminder.
-    return '${out.trim()}$kSmsFooter';
+    // Always note it's automated; only add the app link if the owner opted in
+    // AND is a paid subscriber.
+    out = '${out.trim()}$kSmsAutoNote';
+    if (AppSettings.instance.smsFooterUrlEnabled && Entitlement.isLicensed) {
+      out += kSmsDownloadSuffix;
+    }
+    return out;
   }
 
   /// Silent check (no prompt) — true if SEND_SMS is currently granted.

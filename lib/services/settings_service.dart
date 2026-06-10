@@ -31,6 +31,8 @@ class AppSettings {
   static const _kServerSubUntil = 'serverSubUntilMillis';
   static const _kOnboarded = 'onboardingComplete';
   static const _kLastSweep = 'lastBackgroundSweepMillis';
+  static const _kSmsLink = 'smsFooterUrlEnabled';
+  static const _kLastPausedNotice = 'lastPausedNoticeMillis';
 
   SharedPreferences? _prefs;
 
@@ -75,6 +77,21 @@ class AppSettings {
 
   Future<void> markBackgroundSweep() async =>
       _prefs?.setInt(_kLastSweep, DateTime.now().millisecondsSinceEpoch);
+
+  /// Whether to append the app download link to reminder SMS (subscriber opt-in).
+  bool get smsFooterUrlEnabled => _prefs?.getBool(_kSmsLink) ?? false;
+
+  Future<void> setSmsFooterUrlEnabled(bool v) async =>
+      _prefs?.setBool(_kSmsLink, v);
+
+  /// Throttle for "reminders paused" notifications (once per 24h).
+  bool shouldShowPausedNotice() {
+    final last = _prefs?.getInt(_kLastPausedNotice) ?? 0;
+    return DateTime.now().millisecondsSinceEpoch - last >= 86400000;
+  }
+
+  Future<void> markPausedNotice() async =>
+      _prefs?.setInt(_kLastPausedNotice, DateTime.now().millisecondsSinceEpoch);
 
   bool get driveBackupEnabled => _prefs?.getBool(_kDriveEnabled) ?? false;
 

@@ -25,11 +25,14 @@ const String kDefaultSmsTemplate =
 /// too.
 const String kAppDownloadLink = 'https://oweme-ten.vercel.app';
 
-/// Footer automatically appended to every outgoing reminder SMS. Makes clear
-/// the message is automated (not personally sent) and links to the app.
-const String kSmsFooter =
-    '\n\nThis is an automated reminder sent by the $kAppName app. '
-    'Get $kAppName: $kAppDownloadLink';
+/// Always appended to reminders: makes clear the message is automated (not
+/// personally sent). No marketing/URL here, so it stays spam-filter-friendly.
+const String kSmsAutoNote =
+    '\n\nThis is an automated reminder sent by the $kAppName app.';
+
+/// Optional app-link line. Only appended when the owner turns it on in Settings
+/// AND is a paid subscriber (keeps the link off most messages by default).
+const String kSmsDownloadSuffix = ' Get $kAppName: $kAppDownloadLink';
 
 // --- Licensing (Supabase activation keys) ----------------------------------
 

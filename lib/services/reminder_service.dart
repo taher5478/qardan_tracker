@@ -55,12 +55,17 @@ Future<void> runReminderSweep() async {
   await _reviveForegroundIfNeeded();
 
   // Paid feature: stop sending once the trial ends without a subscription.
+  // Throttle the upsell notification to at most once per day (it used to fire
+  // hourly from both the WorkManager and foreground sweeps).
   if (Entitlement.isLocked) {
-    await NotificationService.show(
-      'Reminders paused',
-      'Your $kAppName free trial has ended. Subscribe to keep sending '
-          'automatic reminders.',
-    );
+    if (AppSettings.instance.shouldShowPausedNotice()) {
+      await AppSettings.instance.markPausedNotice();
+      await NotificationService.show(
+        'Reminders paused',
+        'Your $kAppName free trial has ended. Subscribe to keep sending '
+            'automatic reminders.',
+      );
+    }
     return;
   }
 
@@ -88,31 +93,75 @@ Future<SweepResult> sendDueReminders() async {
       .where((l) => l.isReminderDue(now) && l.id != null)
       .toList();
 
+  // Consolidate per customer: one SMS covering all of that customer's due
+  // accounts, instead of a separate message per invoice.
+  final byCustomer = <int, List<Loan>>{};
+  for (final l in due) {
+    byCustomer.putIfAbsent(l.customerId, () => []).add(l);
+  }
+  final groups = byCustomer.values.toList();
+
   final rng = Random();
   var sent = 0;
   var failed = 0;
-  for (var i = 0; i < due.length; i++) {
-    final loan = due[i];
-    final ok = await sms.sendReminder(loan);
+  for (var g = 0; g < groups.length; g++) {
+    final loans = groups[g];
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    // Atomically claim each due account for this customer. If another sweep
+    // already claimed them all, skip — no double-send.
+    final claimed = <Loan>[];
+    for (final l in loans) {
+      final intervalMs = l.reminderIntervalDays * 24 * 60 * 60 * 1000;
+      if (await db.claimReminder(l.id!, nowMs, intervalMs)) claimed.add(l);
+    }
+    if (claimed.isEmpty) continue;
+
+    final rep = claimed.first;
+    final totalDue = claimed.fold<double>(0, (s, l) => s + l.outstanding);
+    DateTime? earliestDue;
+    for (final l in claimed) {
+      final d = l.dueDate;
+      if (d != null && (earliestDue == null || d.isBefore(earliestDue))) {
+        earliestDue = d;
+      }
+    }
+
+    // Synthetic loan carrying the combined total for the message template.
+    final consolidated = Loan(
+      id: rep.id,
+      customerId: rep.customerId,
+      reference: claimed.length == 1 ? rep.reference : '',
+      principal: totalDue,
+      dateGiven: rep.dateGiven,
+      dueDate: earliestDue,
+      reminderIntervalDays: rep.reminderIntervalDays,
+      customerName: rep.customerName,
+      customerPhone: rep.customerPhone,
+      templateId: rep.templateId,
+    );
+
+    final ok = await sms.sendReminder(consolidated);
     await db.insertReminderLog(ReminderLog(
-      loanId: loan.id!,
-      debtorName: loan.debtorName,
-      phoneNumber: loan.phoneNumber,
-      amount: loan.outstanding,
+      loanId: rep.id!,
+      debtorName: rep.customerName,
+      phoneNumber: rep.customerPhone,
+      amount: totalDue,
       sentAt: DateTime.now(),
       success: ok,
     ));
     if (ok) {
       sent++;
-      await db.markReminderSent(loan.id!, DateTime.now().millisecondsSinceEpoch);
     } else {
+      // Release every claim so the customer is retried on the next sweep.
+      for (final l in claimed) {
+        await db.setLastReminder(l.id!, l.lastReminderAt);
+      }
       failed++;
     }
 
-    // Pace messages so carriers don't flag a spam burst. No delay after the
-    // last one. Each message is also marked sent immediately, so if the
-    // process is killed mid-batch the rest are simply picked up next sweep.
-    if (i < due.length - 1) {
+    // Pace messages between customers so carriers don't flag a burst.
+    if (g < groups.length - 1) {
       final gap = kSmsGapBaseSeconds + rng.nextInt(kSmsGapJitterSeconds + 1);
       await Future.delayed(Duration(seconds: gap));
     }
@@ -142,12 +191,18 @@ Future<void> _reviveForegroundIfNeeded() async {
   }
 }
 
-/// How many credit accounts are due for a reminder right now (for the UI badge).
+/// How many reminder messages are due right now. With per-customer
+/// consolidation this is the number of distinct customers due (= messages),
+/// not the number of invoices.
 Future<int> countDueReminders() async {
   final db = DatabaseHelper.instance;
   final now = DateTime.now();
   final loans = await db.getLoansNeedingReminders();
-  return loans.where((l) => l.isReminderDue(now)).length;
+  final customers = <int>{};
+  for (final l in loans) {
+    if (l.isReminderDue(now)) customers.add(l.customerId);
+  }
+  return customers.length;
 }
 
 /// Hourly background check; per-loan gating decides whether an SMS goes out.
