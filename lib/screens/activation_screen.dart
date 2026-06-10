@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'package:url_launcher/url_launcher.dart';
+
 import '../constants.dart';
+import '../services/account_service.dart';
 import '../services/entitlement.dart';
 import '../services/license_service.dart';
 import '../services/settings_service.dart';
+import '../services/subscription_service.dart';
 import '../theme/app_theme.dart';
 
 /// Ensures the user can use a paid feature (trial OR licensed). Otherwise opens
@@ -34,14 +38,51 @@ class ActivationScreen extends StatefulWidget {
   State<ActivationScreen> createState() => _ActivationScreenState();
 }
 
-class _ActivationScreenState extends State<ActivationScreen> {
+class _ActivationScreenState extends State<ActivationScreen>
+    with WidgetsBindingObserver {
   final _keyCtrl = TextEditingController();
   bool _busy = false;
+  bool _checking = false;
+  bool _awaitingPayment = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _keyCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // User returned from the payment browser — confirm the subscription.
+    if (state == AppLifecycleState.resumed && _awaitingPayment) {
+      _awaitingPayment = false;
+      _pollStatus();
+    }
+  }
+
+  /// Poll the server a few times (the webhook lands a few seconds after
+  /// payment), updating the UI as soon as the subscription is active.
+  Future<void> _pollStatus() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    for (var i = 0; i < 6 && mounted; i++) {
+      await SubscriptionService.instance.refresh();
+      if (Entitlement.isLicensed) break;
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    if (!mounted) return;
+    setState(() => _checking = false);
+    if (Entitlement.isLicensed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Subscription active — thank you!')));
+    }
   }
 
   Future<void> _activate() async {
@@ -72,6 +113,32 @@ class _ActivationScreenState extends State<ActivationScreen> {
   String _fmt(DateTime d) =>
       '${d.day}/${d.month}/${d.year}';
 
+  Future<void> _subscribe() async {
+    final messenger = ScaffoldMessenger.of(context);
+    // Subscriptions attach to an account, so sign in first.
+    if (!AccountService.instance.isSignedIn) {
+      final ok = await AccountService.instance.signInWithGoogle();
+      if (!ok) {
+        messenger.showSnackBar(const SnackBar(
+            content: Text('Please sign in with Google to subscribe')));
+        return;
+      }
+    }
+    setState(() => _busy = true);
+    final link = await SubscriptionService.instance.createCheckoutLink();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (link == null) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Couldn’t start checkout. Try again.')));
+      return;
+    }
+    // Mark that we're awaiting payment; the lifecycle resume handler will poll
+    // the status when the user returns from the browser.
+    _awaitingPayment = true;
+    await launchUrl(Uri.parse(link), mode: LaunchMode.externalApplication);
+  }
+
   @override
   Widget build(BuildContext context) {
     final licensed = Entitlement.isLicensed;
@@ -86,8 +153,59 @@ class _ActivationScreenState extends State<ActivationScreen> {
           _statusCard(licensed, inTrial, daysLeft),
           const SizedBox(height: 24),
 
+          if (_checking)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.sage.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(AppRadius.chip),
+              ),
+              child: const Row(children: [
+                SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.pine)),
+                SizedBox(width: 12),
+                Expanded(
+                    child: Text('Confirming your payment…',
+                        style: TextStyle(
+                            color: AppColors.pineDark,
+                            fontWeight: FontWeight.w600))),
+              ]),
+            ),
+
           if (!licensed) ...[
-            const Text('Enter your activation key',
+            // Primary path: self-serve subscription via Dodo.
+            FilledButton.icon(
+              onPressed: (_busy || _checking) ? null : _subscribe,
+              icon: const Icon(Icons.workspace_premium_outlined),
+              label: Text(_busy ? 'Please wait…' : 'Subscribe · $kPriceLabel'),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Secure payment via Dodo Payments. Cancel anytime.',
+              style: TextStyle(color: AppColors.muted, fontSize: 12.5),
+            ),
+            const SizedBox(height: 10),
+            Center(
+              child: TextButton(
+                onPressed: _checking ? null : _pollStatus,
+                child: const Text('Already paid? Check status'),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(children: const [
+              Expanded(child: Divider(color: AppColors.hairline)),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10),
+                child: Text('or', style: TextStyle(color: AppColors.muted)),
+              ),
+              Expanded(child: Divider(color: AppColors.hairline)),
+            ]),
+            const SizedBox(height: 16),
+            const Text('Have an activation key?',
                 style: TextStyle(
                     color: AppColors.muted, fontWeight: FontWeight.w600)),
             const SizedBox(height: 6),
@@ -97,12 +215,12 @@ class _ActivationScreenState extends State<ActivationScreen> {
               decoration: const InputDecoration(hintText: 'XXXX-XXXX-XXXX'),
             ),
             const SizedBox(height: 14),
-            FilledButton(
+            OutlinedButton(
               onPressed: _busy ? null : _activate,
-              child: Text(_busy ? 'Activating…' : 'Activate'),
+              child: Text(_busy ? 'Activating…' : 'Activate key'),
             ),
             const SizedBox(height: 12),
-            Text('$kPriceLabel · $kActivationContact',
+            Text(kActivationContact,
                 style: const TextStyle(color: AppColors.muted, fontSize: 13)),
           ] else
             OutlinedButton.icon(
@@ -123,10 +241,11 @@ class _ActivationScreenState extends State<ActivationScreen> {
     final String subtitle;
     final Color color;
     if (licensed) {
-      title = 'Activated';
-      final until = AppSettings.instance.licenseValidUntil;
+      title = 'Active';
+      final until = AppSettings.instance.licenseValidUntil ??
+          AppSettings.instance.serverSubUntil;
       subtitle = until == null
-          ? 'Your key is active. Thank you!'
+          ? 'Your subscription is active. Thank you!'
           : 'Active until ${_fmt(until)}. Thank you!';
       color = AppColors.success;
     } else if (inTrial) {

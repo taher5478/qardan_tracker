@@ -1,8 +1,11 @@
-import 'package:flutter/material.dart';
+import 'dart:math';
 
-import '../constants.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../constants.dart';
+
+import '../services/account_service.dart';
 import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/drive_backup_service.dart';
@@ -129,8 +132,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return false;
     }
     await _settings.setPin(pin);
-    _snack('PIN set');
+    await _showRecoveryCode();
     return true;
+  }
+
+  /// Generate a one-time recovery code, store its hash, and show it so the user
+  /// can reset the PIN later without losing data.
+  Future<void> _showRecoveryCode() async {
+    final rng = Random.secure();
+    String block() => List.generate(
+        4, (_) => '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'[rng.nextInt(32)]).join();
+    final code = '${block()}-${block()}';
+    await _settings.setRecoveryCode(code);
+    await AccountService.instance.pushProfile(); // mirror to server if signed in
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save your recovery code'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'If you forget your PIN, this code unlocks the app and resets '
+                'it — without losing your data. Write it down now; it won’t be '
+                'shown again.'),
+            const SizedBox(height: 16),
+            SelectableText(code,
+                style: AppTheme.money(size: 26, color: AppColors.pine)),
+          ],
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('I’ve saved it')),
+        ],
+      ),
+    );
   }
 
   Future<String?> _promptPin(String title) async {
@@ -161,6 +201,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _signIn() async {
+    setState(() => _busy = true);
+    final ok = await AccountService.instance.signInWithGoogle();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    _snack(ok
+        ? 'Signed in as ${AccountService.instance.email}'
+        : 'Sign-in unavailable or cancelled');
+  }
+
+  Future<void> _signOut() async {
+    await AccountService.instance.signOut();
+    _snack('Signed out');
+    setState(() {});
   }
 
   Future<void> _toggleForeground(bool enable) async {
@@ -212,6 +268,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
           children: [
+            _section('Account'),
+            if (AccountService.instance.isSignedIn)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(
+                    backgroundColor: AppColors.sage,
+                    child: Icon(Icons.person, color: AppColors.pine)),
+                title: Text(AccountService.instance.email ?? 'Signed in',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('Synced for backup, subscription & PIN recovery'),
+                trailing: TextButton(
+                    onPressed: _signOut, child: const Text('Sign out')),
+              )
+            else
+              _actionTile(
+                Icons.login,
+                'Sign in with Google',
+                'Records your account, enables subscription & PIN recovery',
+                _signIn,
+              ),
+            const SizedBox(height: 22),
+
             _section('Activation'),
             _actionTile(
               Icons.workspace_premium_outlined,

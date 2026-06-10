@@ -6,12 +6,14 @@ import 'package:workmanager/workmanager.dart';
 import 'constants.dart';
 import 'screens/home_screen.dart';
 import 'screens/lock_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'services/drive_backup_service.dart';
 import 'services/foreground_service.dart';
 import 'services/license_service.dart';
 import 'services/notification_service.dart';
 import 'services/reminder_service.dart';
 import 'services/settings_service.dart';
+import 'services/subscription_service.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -24,8 +26,9 @@ Future<void> main() async {
 
   await Supabase.initialize(
       url: kSupabaseUrl, publishableKey: kSupabasePublishableKey);
-  // Re-check the stored activation key online (refreshes expiry). Non-blocking.
+  // Re-check the stored activation key + Dodo subscription online (non-blocking).
   LicenseService.instance.revalidate();
+  SubscriptionService.instance.refresh();
 
   await Workmanager().initialize(callbackDispatcher);
 
@@ -110,6 +113,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     if (_lockActive && !_unlocked) {
       return LockScreen(onUnlocked: () => setState(() => _unlocked = true));
+    }
+    if (!AppSettings.instance.onboardingComplete) {
+      return OnboardingScreen(onDone: () => setState(() {}));
     }
     return const HomeScreen();
   }

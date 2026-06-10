@@ -6,6 +6,7 @@ import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../services/entitlement.dart';
 import '../services/reminder_service.dart';
+import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 import 'contact_picker_screen.dart';
@@ -21,15 +22,16 @@ class _HomeData {
   final int dueNow;
   final bool smsGranted;
   final bool batteryExempt;
+  final bool backgroundStale;
   const _HomeData(this.customers, this.remindersSent, this.dueNow,
-      this.smsGranted, this.batteryExempt);
+      this.smsGranted, this.batteryExempt, this.backgroundStale);
 
   double get totalOutstanding =>
       customers.fold<double>(0, (s, c) => s + c.totalOutstanding);
 
   int get openCustomers => customers.where((c) => !c.isSettled).length;
 
-  bool get hasWarnings => !smsGranted || !batteryExempt;
+  bool get hasWarnings => !smsGranted || !batteryExempt || backgroundStale;
 }
 
 class HomeScreen extends StatefulWidget {
@@ -56,12 +58,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<_HomeData> _load() async {
+    await AppSettings.instance.reload(); // pick up background-isolate writes
     final customers = await _db.getCustomerSummaries();
     final sent = await _db.countSentReminders();
     final due = await countDueReminders();
     final smsGranted = await Permission.sms.isGranted;
     final batteryExempt = await Permission.ignoreBatteryOptimizations.isGranted;
-    return _HomeData(customers, sent, due, smsGranted, batteryExempt);
+
+    // "Background dead" = there are active reminders, a sweep has run before,
+    // but not in the last 24h. (Null = never run yet -> don't false-alarm.)
+    final hasReminderAccounts =
+        customers.any((c) => !c.isSettled && c.openAccounts > 0);
+    final last = AppSettings.instance.lastBackgroundSweep;
+    final stale = hasReminderAccounts &&
+        last != null &&
+        DateTime.now().difference(last) > const Duration(hours: 24);
+
+    return _HomeData(customers, sent, due, smsGranted, batteryExempt, stale);
   }
 
   Future<void> _fixSms() async {
@@ -113,6 +126,22 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const ActivationScreen()),
     );
+    _reload();
+  }
+
+  /// Catch-up: send reminders the (possibly killed) background task missed.
+  Future<void> _sendDueNow() async {
+    if (!await requireActive(context)) return;
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final res = await sendDueReminders();
+    if (!mounted) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text(res.total == 0
+          ? 'Nothing sent — check SMS permission'
+          : '${res.sent} sent from your SIM'
+              '${res.failed > 0 ? ', ${res.failed} failed' : ''}'),
+    ));
     _reload();
   }
 
@@ -172,13 +201,19 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: _openSubscription,
             ),
           ),
+        if (data.dueNow > 0 && Entitlement.isActive)
+          SliverToBoxAdapter(
+            child: _CatchUpBanner(count: data.dueNow, onSend: _sendDueNow),
+          ),
         if (data.hasWarnings)
           SliverToBoxAdapter(
             child: _HealthBanners(
               smsGranted: data.smsGranted,
               batteryExempt: data.batteryExempt,
+              backgroundStale: data.backgroundStale,
               onFixSms: _fixSms,
               onFixBattery: _fixBattery,
+              onFixBackground: _openSettings,
             ),
           ),
         SliverToBoxAdapter(
@@ -292,6 +327,65 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// Catch-up banner: due reminders the background task may have missed.
+class _CatchUpBanner extends StatelessWidget {
+  const _CatchUpBanner({required this.count, required this.onSend});
+  final int count;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Material(
+        color: AppColors.pine,
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        child: InkWell(
+          onTap: onSend,
+          borderRadius: BorderRadius.circular(AppRadius.chip),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                const Icon(Icons.schedule_send, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$count reminder${count == 1 ? '' : 's'} due to send',
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w700),
+                      ),
+                      const Text('Tap to send them now from your SIM.',
+                          style:
+                              TextStyle(color: Colors.white70, fontSize: 12.5)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: onSend,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.pine,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                  child: const Text('Send now'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Trial-countdown / paywall banner.
 class _SubscriptionBanner extends StatelessWidget {
   const _SubscriptionBanner(
@@ -369,13 +463,17 @@ class _HealthBanners extends StatelessWidget {
   const _HealthBanners({
     required this.smsGranted,
     required this.batteryExempt,
+    required this.backgroundStale,
     required this.onFixSms,
     required this.onFixBattery,
+    required this.onFixBackground,
   });
   final bool smsGranted;
   final bool batteryExempt;
+  final bool backgroundStale;
   final VoidCallback onFixSms;
   final VoidCallback onFixBattery;
+  final VoidCallback onFixBackground;
 
   @override
   Widget build(BuildContext context) {
@@ -391,6 +489,16 @@ class _HealthBanners extends StatelessWidget {
                   'SMS permission is off, so automatic reminders won’t go out.',
               action: 'Enable SMS',
               onTap: onFixSms,
+            ),
+          if (backgroundStale)
+            _banner(
+              icon: Icons.running_with_errors_outlined,
+              title: 'Background reminders stopped',
+              body:
+                  'No reminders have run in over 24h — your phone likely killed '
+                  'the app. Enable background mode & battery exemption.',
+              action: 'Fix',
+              onTap: onFixBackground,
             ),
           if (!batteryExempt)
             _banner(

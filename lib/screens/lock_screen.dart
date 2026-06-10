@@ -1,7 +1,10 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../constants.dart';
+import '../services/account_service.dart';
 import '../services/auth_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
@@ -68,6 +71,118 @@ class _LockScreenState extends State<LockScreen> {
     }
   }
 
+  /// Recover access with the recovery code, then set a new PIN. Never loses data.
+  Future<void> _forgotPin() async {
+    final codeCtrl = TextEditingController();
+    final verified = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Enter recovery code'),
+        content: TextField(
+          controller: codeCtrl,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(hintText: 'XXXX-XXXX'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(ctx, _settings.verifyRecovery(codeCtrl.text)),
+            child: const Text('Verify'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (verified != true) {
+      setState(() => _error = 'Incorrect recovery code');
+      return;
+    }
+
+    // Valid recovery → set a fresh PIN (with a new recovery code), then unlock.
+    final newPin = await _promptNewPin();
+    if (newPin == null) return;
+    await _settings.setPin(newPin);
+    final newCode = await _showNewRecoveryCode();
+    if (newCode && mounted) widget.onUnlocked();
+  }
+
+  Future<String?> _promptNewPin() async {
+    final a = TextEditingController();
+    final b = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Set a new PIN'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+                controller: a,
+                autofocus: true,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                    labelText: 'New PIN', counterText: '')),
+            TextField(
+                controller: b,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                decoration: const InputDecoration(
+                    labelText: 'Confirm PIN', counterText: '')),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () {
+              final v = a.text.trim();
+              if (v.length >= 4 && v == b.text.trim()) Navigator.pop(ctx, v);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _showNewRecoveryCode() async {
+    final rng = Random.secure();
+    String block() => List.generate(
+        4, (_) => '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'[rng.nextInt(32)]).join();
+    final code = '${block()}-${block()}';
+    await _settings.setRecoveryCode(code);
+    await AccountService.instance.pushProfile(); // keep server copy in sync
+    if (!mounted) return true;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('New recovery code'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Save this new code — your old one no longer works.'),
+            const SizedBox(height: 12),
+            SelectableText(code,
+                style: AppTheme.money(size: 24, color: AppColors.pine)),
+          ],
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Done')),
+        ],
+      ),
+    );
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -91,6 +206,11 @@ class _LockScreenState extends State<LockScreen> {
                 onPressed: _tryingBiometric ? null : _tryBiometric,
                 icon: const Icon(Icons.fingerprint),
                 label: const Text('Use biometrics'),
+              ),
+            if (_settings.hasRecovery)
+              TextButton(
+                onPressed: _forgotPin,
+                child: const Text('Forgot PIN?'),
               ),
             const Spacer(),
             _keypad(),

@@ -20,10 +20,15 @@ class Entitlement {
 
   static bool get inTrial => trialDaysLeft > 0;
 
-  /// True when a valid (non-expired) activation key is held on this device.
+  /// True when the user holds a paid entitlement: either a valid manual
+  /// activation key OR an active Dodo subscription (both cached locally).
   static bool get isLicensed {
-    final until = AppSettings.instance.licenseValidUntil;
-    return until != null && DateTime.now().isBefore(until);
+    final now = DateTime.now();
+    final keyUntil = AppSettings.instance.licenseValidUntil;
+    final subUntil = AppSettings.instance.serverSubUntil;
+    final keyOk = keyUntil != null && now.isBefore(keyUntil);
+    final subOk = subUntil != null && now.isBefore(subUntil);
+    return keyOk || subOk;
   }
 
   /// True when the user may use paid features (trial or licensed).

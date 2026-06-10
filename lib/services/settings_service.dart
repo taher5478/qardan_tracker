@@ -20,6 +20,7 @@ class AppSettings {
   static const _kLock = 'lockEnabled';
   static const _kBiometric = 'biometricEnabled';
   static const _kPinHash = 'pinHash';
+  static const _kRecovery = 'pinRecoveryHash';
   static const _kForeground = 'foregroundEnabled';
   static const _kDriveEnabled = 'driveBackupEnabled';
   static const _kDriveEmail = 'driveAccountEmail';
@@ -27,12 +28,19 @@ class AppSettings {
   static const _kTrialStart = 'trialStartMillis';
   static const _kLicenseUntil = 'licenseValidUntilMillis';
   static const _kLicenseKey = 'activationKey';
+  static const _kServerSubUntil = 'serverSubUntilMillis';
+  static const _kOnboarded = 'onboardingComplete';
+  static const _kLastSweep = 'lastBackgroundSweepMillis';
 
   SharedPreferences? _prefs;
 
   Future<void> ensureLoaded() async {
     _prefs ??= await SharedPreferences.getInstance();
   }
+
+  /// Re-read from disk to pick up values written by the background isolate
+  /// (e.g. the sweep heartbeat, drive-backup time).
+  Future<void> reload() async => _prefs?.reload();
 
   // --- Reads (safe before load) --------------------------------------------
 
@@ -52,6 +60,21 @@ class AppSettings {
   bool get hasPin => (_prefs?.getString(_kPinHash) ?? '').isNotEmpty;
 
   bool get foregroundEnabled => _prefs?.getBool(_kForeground) ?? false;
+
+  bool get onboardingComplete => _prefs?.getBool(_kOnboarded) ?? false;
+
+  Future<void> setOnboardingComplete() async =>
+      _prefs?.setBool(_kOnboarded, true);
+
+  /// When the background sweep last actually ran — used to detect when an OEM
+  /// has killed background execution.
+  DateTime? get lastBackgroundSweep {
+    final ms = _prefs?.getInt(_kLastSweep);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> markBackgroundSweep() async =>
+      _prefs?.setInt(_kLastSweep, DateTime.now().millisecondsSinceEpoch);
 
   bool get driveBackupEnabled => _prefs?.getBool(_kDriveEnabled) ?? false;
 
@@ -124,6 +147,17 @@ class AppSettings {
     await _prefs?.remove(_kLicenseKey);
   }
 
+  /// Cached expiry of an active Dodo subscription (from the server).
+  DateTime? get serverSubUntil {
+    final ms = _prefs?.getInt(_kServerSubUntil);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> setServerSub(DateTime until) async =>
+      _prefs?.setInt(_kServerSubUntil, until.millisecondsSinceEpoch);
+
+  Future<void> clearServerSub() async => _prefs?.remove(_kServerSubUntil);
+
   /// Enabling the lock requires a PIN to already be set.
   Future<void> setLockEnabled(bool v) async => _prefs?.setBool(_kLock, v);
 
@@ -133,6 +167,7 @@ class AppSettings {
 
   Future<void> clearPin() async {
     await _prefs?.remove(_kPinHash);
+    await _prefs?.remove(_kRecovery);
     await _prefs?.setBool(_kLock, false);
   }
 
@@ -140,6 +175,24 @@ class AppSettings {
     final stored = _prefs?.getString(_kPinHash) ?? '';
     return stored.isNotEmpty && stored == _hash(pin);
   }
+
+  // --- PIN recovery code ----------------------------------------------------
+
+  bool get hasRecovery => (_prefs?.getString(_kRecovery) ?? '').isNotEmpty;
+
+  /// Raw recovery hash, for mirroring to the server profile.
+  String? get recoveryHashRaw => _prefs?.getString(_kRecovery);
+
+  Future<void> setRecoveryCode(String code) async =>
+      _prefs?.setString(_kRecovery, _hash(_normalize(code)));
+
+  bool verifyRecovery(String code) {
+    final stored = _prefs?.getString(_kRecovery) ?? '';
+    return stored.isNotEmpty && stored == _hash(_normalize(code));
+  }
+
+  String _normalize(String code) =>
+      code.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
 
   // PINs are short, so a plain hash is not a strong KDF — but it keeps the PIN
   // out of plaintext storage. Real secrecy comes from the OS keystore + device
