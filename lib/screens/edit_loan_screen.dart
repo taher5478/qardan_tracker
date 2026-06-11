@@ -46,6 +46,7 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
 
   late DateTime _dateGiven;
   DateTime? _dueDate;
+  bool _dueDateError = false;
   late int _reminderDays;
 
   final _amountFocus = FocusNode();
@@ -97,7 +98,11 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+    final formOk = _formKey.currentState!.validate();
+    // Due date is mandatory: reminders anchor to it (first reminder lands ON
+    // the due date, never before).
+    setState(() => _dueDateError = _dueDate == null);
+    if (!formOk || _dueDate == null) return;
 
     if (_isEditing) {
       final base = widget.loan!;
@@ -141,7 +146,14 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
       lastDate: DateTime(2100),
     );
     if (picked == null) return;
-    setState(() => isDue ? _dueDate = picked : _dateGiven = picked);
+    setState(() {
+      if (isDue) {
+        _dueDate = picked;
+        _dueDateError = false;
+      } else {
+        _dateGiven = picked;
+      }
+    });
   }
 
   @override
@@ -215,6 +227,20 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
               const SizedBox(height: 20),
             ],
 
+            _label('Due date'),
+            _dateRow(
+                _dueDate == null ? 'Select due date' : 'Due date',
+                _dueDate,
+                () => _pickDate(true),
+                error: _dueDateError),
+            if (_dueDateError)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('Please select a due date',
+                    style: TextStyle(color: AppColors.danger, fontSize: 12.5)),
+              ),
+            const SizedBox(height: 20),
+
             _label('Invoice / reference (optional)'),
             TextFormField(
               controller: _reference,
@@ -258,12 +284,7 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
                 children: [
                   if (!_isEditing)
                     _dateRow('Date given', _dateGiven, () => _pickDate(false)),
-                  if (!_isEditing) const SizedBox(height: 8),
-                  _dateRow('Due date (optional)', _dueDate, () => _pickDate(true),
-                      onClear: _dueDate == null
-                          ? null
-                          : () => setState(() => _dueDate = null)),
-                  const SizedBox(height: 16),
+                  if (!_isEditing) const SizedBox(height: 16),
                   TextFormField(
                     controller: _note,
                     maxLines: 2,
@@ -314,7 +335,7 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
       );
 
   Widget _dateRow(String label, DateTime? date, VoidCallback onTap,
-      {VoidCallback? onClear}) {
+      {bool error = false}) {
     final df = DateFormat.yMMMd();
     return InkWell(
       onTap: onTap,
@@ -323,22 +344,21 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(AppRadius.field),
-          border: Border.all(color: AppColors.hairline),
+          border: Border.all(
+              color: error ? AppColors.danger : AppColors.hairline,
+              width: error ? 1.4 : 1),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today, size: 18, color: AppColors.muted),
+            Icon(Icons.calendar_today,
+                size: 18, color: error ? AppColors.danger : AppColors.muted),
             const SizedBox(width: 12),
-            Text(label, style: const TextStyle(color: AppColors.muted)),
+            Text(label,
+                style: TextStyle(
+                    color: error ? AppColors.danger : AppColors.muted)),
             const Spacer(),
             Text(date == null ? 'Not set' : df.format(date),
                 style: const TextStyle(fontWeight: FontWeight.w600)),
-            if (onClear != null)
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.close, size: 18),
-                onPressed: onClear,
-              ),
           ],
         ),
       ),
