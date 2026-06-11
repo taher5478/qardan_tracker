@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../db/database_helper.dart';
 import '../models/customer.dart';
 import '../services/entitlement.dart';
 import '../services/reminder_service.dart';
+import '../services/remote_config_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
@@ -49,6 +52,69 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _reload();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkRemoteConfig());
+  }
+
+  /// On open: show a one-time broadcast message and/or an update prompt
+  /// (download the new APK from the website).
+  Future<void> _checkRemoteConfig() async {
+    final cfg = await RemoteConfigService.fetch();
+    if (cfg == null || !mounted) return;
+
+    // Broadcast message — shown once per alert id.
+    if (cfg.alertMessage.trim().isNotEmpty &&
+        cfg.alertId != AppSettings.instance.lastSeenAlertId) {
+      await AppSettings.instance.setLastSeenAlertId(cfg.alertId);
+      if (!mounted) return;
+      await _showAlert(cfg.alertTitle, cfg.alertMessage);
+    }
+
+    // Update prompt — when the installed build is older than the latest.
+    final info = await PackageInfo.fromPlatform();
+    final current = int.tryParse(info.buildNumber) ?? 0;
+    if (current < cfg.latestVersionCode && mounted) {
+      await _showUpdate(cfg);
+    }
+  }
+
+  Future<void> _showAlert(String title, String message) {
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title.trim().isEmpty ? 'Message' : title),
+        content: Text(message),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showUpdate(RemoteConfig cfg) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: !cfg.forceUpdate,
+      builder: (ctx) => PopScope(
+        canPop: !cfg.forceUpdate,
+        child: AlertDialog(
+          title: const Text('Update available'),
+          content: Text(cfg.updateMessage),
+          actions: [
+            if (!cfg.forceUpdate)
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Later')),
+            FilledButton.icon(
+              onPressed: () => launchUrl(Uri.parse(cfg.apkUrl),
+                  mode: LaunchMode.externalApplication),
+              icon: const Icon(Icons.download),
+              label: const Text('Download'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _reload() {

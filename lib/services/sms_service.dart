@@ -49,10 +49,10 @@ class SmsService {
 
     var out = template;
     values.forEach((key, value) => out = out.replaceAll(key, value));
-    // Always note it's automated; only add the app link if the owner opted in
-    // AND is a paid subscriber.
+    // Always note it's automated. App link is on by default for everyone;
+    // only licensed users may turn it off.
     out = '${out.trim()}$kSmsAutoNote';
-    if (AppSettings.instance.smsFooterUrlEnabled && Entitlement.isLicensed) {
+    if (!Entitlement.isLicensed || AppSettings.instance.smsFooterUrlEnabled) {
       out += kSmsDownloadSuffix;
     }
     return out;

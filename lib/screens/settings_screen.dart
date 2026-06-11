@@ -309,8 +309,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: const Text('Add app link to reminders'),
               subtitle: Text(Entitlement.isLicensed
                   ? 'Appends “Get OweMe: $kAppDownloadLink” to each message'
-                  : 'Premium — subscribe to enable'),
-              value: _settings.smsFooterUrlEnabled && Entitlement.isLicensed,
+                  : 'Always on — subscribe to turn it off'),
+              value: Entitlement.isLicensed
+                  ? _settings.smsFooterUrlEnabled
+                  : true,
               activeThumbColor: AppColors.pine,
               onChanged: Entitlement.isLicensed
                   ? (v) async {

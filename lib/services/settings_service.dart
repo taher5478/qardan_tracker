@@ -33,6 +33,7 @@ class AppSettings {
   static const _kLastSweep = 'lastBackgroundSweepMillis';
   static const _kSmsLink = 'smsFooterUrlEnabled';
   static const _kLastPausedNotice = 'lastPausedNoticeMillis';
+  static const _kLastAlertId = 'lastSeenAlertId';
 
   SharedPreferences? _prefs;
 
@@ -78,8 +79,9 @@ class AppSettings {
   Future<void> markBackgroundSweep() async =>
       _prefs?.setInt(_kLastSweep, DateTime.now().millisecondsSinceEpoch);
 
-  /// Whether to append the app download link to reminder SMS (subscriber opt-in).
-  bool get smsFooterUrlEnabled => _prefs?.getBool(_kSmsLink) ?? false;
+  /// Whether to append the app download link to reminder SMS. Default ON;
+  /// only premium subscribers may turn it off.
+  bool get smsFooterUrlEnabled => _prefs?.getBool(_kSmsLink) ?? true;
 
   Future<void> setSmsFooterUrlEnabled(bool v) async =>
       _prefs?.setBool(_kSmsLink, v);
@@ -92,6 +94,12 @@ class AppSettings {
 
   Future<void> markPausedNotice() async =>
       _prefs?.setInt(_kLastPausedNotice, DateTime.now().millisecondsSinceEpoch);
+
+  /// The last broadcast alert id the user has already seen (shown once each).
+  int get lastSeenAlertId => _prefs?.getInt(_kLastAlertId) ?? -1;
+
+  Future<void> setLastSeenAlertId(int id) async =>
+      _prefs?.setInt(_kLastAlertId, id);
 
   bool get driveBackupEnabled => _prefs?.getBool(_kDriveEnabled) ?? false;
 
