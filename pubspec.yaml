@@ -48,6 +48,10 @@ dependencies:
   # Runtime permissions + battery optimization
   permission_handler: ^11.3.1
 
+  # Vendor app-killer settings (Xiaomi/Oppo/Vivo autostart & battery managers)
+  # that the standard battery-optimization exemption doesn't cover
+  disable_battery_optimization: ^1.1.2
+
   # Local notifications (logging/confirmation of sent reminders)
   flutter_local_notifications: ^17.2.3
 

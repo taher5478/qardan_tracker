@@ -3,6 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../services/drive_backup_service.dart';
 import '../services/foreground_service.dart';
+import '../services/oem_battery_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'activation_screen.dart';
@@ -22,6 +23,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   bool _sms = false;
   bool _notif = false;
   bool _battery = false;
+  bool _oemHandled = false;
 
   @override
   void initState() {
@@ -45,11 +47,13 @@ class _OnboardingScreenState extends State<OnboardingScreen>
     final sms = await Permission.sms.isGranted;
     final notif = await Permission.notification.isGranted;
     final battery = await Permission.ignoreBatteryOptimizations.isGranted;
+    final oemHandled = await OemBatteryService.isHandled();
     if (!mounted) return;
     setState(() {
       _sms = sms;
       _notif = notif;
       _battery = battery;
+      _oemHandled = oemHandled;
     });
   }
 
@@ -130,6 +134,19 @@ class _OnboardingScreenState extends State<OnboardingScreen>
                     onAction: () =>
                         _request(Permission.ignoreBatteryOptimizations),
                   ),
+                  if (!_oemHandled)
+                    _step(
+                      icon: Icons.settings_suggest_outlined,
+                      title: 'Allow auto-start',
+                      body: 'Your phone has extra settings that kill apps. '
+                          'Follow the steps so reminders are never stopped.',
+                      done: _oemHandled,
+                      action: 'Open',
+                      onAction: () async {
+                        await OemBatteryService.openSettings();
+                        await _refresh();
+                      },
+                    ),
                   _step(
                     icon: Icons.shield_outlined,
                     title: 'Keep running in background',

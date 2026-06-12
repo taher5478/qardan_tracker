@@ -12,6 +12,7 @@ import '../services/backup_service.dart';
 import '../services/drive_backup_service.dart';
 import '../services/entitlement.dart';
 import '../services/foreground_service.dart';
+import '../services/oem_battery_service.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import 'activation_screen.dart';
@@ -436,6 +437,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(color: AppColors.muted, fontSize: 12),
               ),
             ),
+            _actionTile(
+                Icons.settings_suggest_outlined,
+                'Phone-specific battery settings',
+                'Allow auto-start & stop the battery manager killing reminders',
+                OemBatteryService.openSettings),
             const SizedBox(height: 12),
 
             _section('Backup & export'),

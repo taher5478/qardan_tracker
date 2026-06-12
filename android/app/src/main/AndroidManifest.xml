@@ -9,7 +9,8 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- Optional persistent foreground service (background reliability) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- specialUse: exempt from the Android 15 dataSync 6-hour runtime limit -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <!-- Post notifications (Android 13+) and keep waking for periodic work -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
@@ -48,9 +49,13 @@
         <!-- Persistent foreground service host (flutter_foreground_task) -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
-            android:foregroundServiceType="dataSync"
+            android:foregroundServiceType="specialUse"
             android:exported="false"
-            android:stopWithTask="false" />
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps loan payment reminders active and the persistent reminder notification visible to the user" />
+        </service>
 
         <!-- AlarmManager watchdog (android_alarm_manager_plus): system-delivered
              alarms that wake the app even after the OS/OEM kills it -->
