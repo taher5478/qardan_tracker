@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../constants.dart';
 import '../db/database_helper.dart';
 import '../models/loan.dart';
+import '../services/settings_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 
@@ -106,7 +106,8 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
 
     if (_isEditing) {
       final base = widget.loan!;
-      // Build explicitly (not copyWith) so a null due date actually clears it.
+      // Build explicitly (not copyWith) to update only the editable terms;
+      // principal and the original dateGiven stay locked.
       await _db.updateLoanTerms(Loan(
         id: base.id,
         customerId: base.customerId,
@@ -138,21 +139,17 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
     Navigator.of(context).pop(true);
   }
 
-  Future<void> _pickDate(bool isDue) async {
+  Future<void> _pickDueDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: (isDue ? _dueDate : _dateGiven) ?? DateTime.now(),
+      initialDate: _dueDate ?? DateTime.now(),
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
     if (picked == null) return;
     setState(() {
-      if (isDue) {
-        _dueDate = picked;
-        _dueDateError = false;
-      } else {
-        _dateGiven = picked;
-      }
+      _dueDate = picked;
+      _dueDateError = false;
     });
   }
 
@@ -194,7 +191,9 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 style: AppTheme.money(size: 26, color: AppColors.ink),
-                decoration: const InputDecoration(prefixText: '$kCurrencySymbol  ', hintText: '0'),
+                decoration: InputDecoration(
+                    prefixText: '${AppSettings.instance.currencySymbol}  ',
+                    hintText: '0'),
                 validator: (v) {
                   final n = double.tryParse(v?.trim() ?? '');
                   if (n == null || n <= 0) return 'Enter a valid amount';
@@ -231,7 +230,7 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
             _dateRow(
                 _dueDate == null ? 'Select due date' : 'Due date',
                 _dueDate,
-                () => _pickDate(true),
+                _pickDueDate,
                 error: _dueDateError),
             if (_dueDateError)
               const Padding(
@@ -282,9 +281,6 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
                     style: TextStyle(
                         fontWeight: FontWeight.w600, color: AppColors.pine)),
                 children: [
-                  if (!_isEditing)
-                    _dateRow('Date given', _dateGiven, () => _pickDate(false)),
-                  if (!_isEditing) const SizedBox(height: 16),
                   TextFormField(
                     controller: _note,
                     maxLines: 2,

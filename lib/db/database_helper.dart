@@ -247,8 +247,10 @@ class DatabaseHelper {
     for (final row in customerRows) {
       final customer = Customer.fromMap(row);
       final list = byCustomer[customer.id] ?? const [];
-      final outstanding =
-          list.fold<double>(0, (s, l) => s + (l.isActive ? l.outstanding : 0));
+      // Archived accounts ("stop reminders") still owe money, so their balance
+      // stays in the receivable total — archiving silences reminders, it does
+      // not write off the debt.
+      final outstanding = list.fold<double>(0, (s, l) => s + l.outstanding);
       final given = list.fold<double>(0, (s, l) => s + l.principal);
       final open = list.where((l) => l.isActive && !l.isSettled).length;
       final due = list.where((l) => l.isReminderDue(now)).length;
@@ -320,7 +322,12 @@ class DatabaseHelper {
 
   Future<void> deleteLoan(int id) async {
     final db = await database;
-    await db.delete(loans, where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      // reminder_log has no FK to loans, so clean up its rows by hand to avoid
+      // orphaned history pointing at a deleted account.
+      await txn.delete(logTable, where: 'loanId = ?', whereArgs: [id]);
+      await txn.delete(loans, where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   /// Active, unsettled loans whose reminder interval is set. The actual
@@ -380,11 +387,35 @@ class DatabaseHelper {
     return rows.map(Payment.fromMap).toList();
   }
 
+  /// Every payment with its customer/account context, for the CSV audit trail.
+  /// Returns plain maps (not [Payment]) since each row carries joined columns.
+  Future<List<Map<String, Object?>>> getAllPaymentsDetailed() async {
+    final db = await database;
+    return db.rawQuery('''
+        SELECT p.paidAt, p.amount, p.note,
+               c.name AS customerName, c.phone AS customerPhone,
+               l.reference AS reference
+        FROM payments p
+        JOIN loans l ON l.id = p.loanId
+        JOIN customers c ON c.id = l.customerId
+        ORDER BY p.paidAt DESC''');
+  }
+
   // --- Reminder log ---------------------------------------------------------
+
+  /// Keep the reminder history from growing without bound. Retains the most
+  /// recent [_logRetention] rows and drops anything older.
+  static const _logRetention = 1000;
 
   Future<int> insertReminderLog(ReminderLog log) async {
     final db = await database;
-    return db.insert(logTable, log.toMap()..remove('id'));
+    final id = await db.insert(logTable, log.toMap()..remove('id'));
+    await db.rawDelete(
+      'DELETE FROM $logTable WHERE id NOT IN '
+      '(SELECT id FROM $logTable ORDER BY sentAt DESC LIMIT ?)',
+      [_logRetention],
+    );
+    return id;
   }
 
   Future<List<ReminderLog>> getReminderLogs() async {

@@ -89,6 +89,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() {});
   }
 
+  /// Restore is destructive — it replaces everything. Make the user confirm.
+  Future<bool> _confirmRestore() async {
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restore backup?'),
+        content: const Text(
+            'This replaces ALL current data in the app with the backup’s '
+            'contents. Anything not in the backup will be lost. Continue?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    return res ?? false;
+  }
+
+  Future<void> _restoreFromFile() async {
+    if (!await requireLicensed(context)) return;
+    if (!mounted) return;
+    if (!await _confirmRestore()) return;
+    if (!mounted) return;
+    setState(() => _busy = true);
+    try {
+      final msg = await _backup.restoreFromJson();
+      _snack(msg);
+    } catch (_) {
+      _snack('Restore failed — that file may be damaged');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _restoreFromDrive() async {
+    if (!await requireLicensed(context)) return;
+    if (!await _confirmRestore()) return;
+    if (!mounted) return;
+    setState(() => _busy = true);
+    final msg = await _drive.restoreLatest();
+    if (!mounted) return;
+    _snack(msg);
+    setState(() => _busy = false);
+  }
+
   Future<void> _driveBackupNow() async {
     if (!await requireLicensed(context)) return;
     if (!mounted) return;
@@ -390,11 +441,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 'Free — share a spreadsheet of all accounts',
                 () => _runBackup(_backup.exportLedgerCsv, 'Ledger exported',
                     premium: false)),
-            // Full JSON backup stays subscriber-only. Restore/import is removed
-            // entirely (no in-app way to re-import data).
+            // Full JSON backup stays subscriber-only.
             _actionTile(Icons.backup_outlined, 'Full backup (JSON)',
                 'Save a complete copy of your data',
                 () => _runBackup(_backup.backupToJson, 'Backup created'),
+                locked: !Entitlement.isLicensed),
+            // Restore is subscriber-only, like backup — it can't be used to
+            // carry data through repeated free trials.
+            _actionTile(Icons.restore_outlined, 'Restore from backup file',
+                'Recover everything from a backup (.json) file',
+                _restoreFromFile,
                 locked: !Entitlement.isLicensed),
 
             const SizedBox(height: 20),
@@ -434,6 +490,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: const Text('Disconnect'),
                   ),
                 ],
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _restoreFromDrive,
+                icon: const Icon(Icons.cloud_download_outlined),
+                label: const Text('Restore latest from Drive'),
               ),
             ],
 

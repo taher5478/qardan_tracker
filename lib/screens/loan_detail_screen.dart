@@ -7,6 +7,7 @@ import '../db/database_helper.dart';
 import '../models/loan.dart';
 import '../models/payment.dart';
 import '../models/reminder_log.dart';
+import '../services/settings_service.dart';
 import '../services/sms_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
@@ -54,41 +55,74 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
     final loan = _loan!;
     final amountCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
+    final currency = AppSettings.instance.currencySymbol;
+
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Record payment'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountCtrl,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                  labelText: 'Amount received', prefixText: '$kCurrencySymbol  '),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final raw = amountCtrl.text.trim().replaceAll(',', '');
+          final amount = double.tryParse(raw);
+          final invalid = amount == null || amount <= 0;
+          final over = amount != null && amount > loan.outstanding;
+          return AlertDialog(
+            title: const Text('Record payment'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: amountCtrl,
+                  autofocus: true,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) => setLocal(() {}),
+                  decoration: InputDecoration(
+                    labelText: 'Amount received',
+                    prefixText: '$currency  ',
+                    errorText: raw.isNotEmpty && invalid
+                        ? 'Enter a valid amount'
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text('Outstanding: ${money.format(loan.outstanding)}',
+                    style: const TextStyle(
+                        color: AppColors.muted, fontSize: 12)),
+                if (over)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'This is more than the outstanding '
+                      '${money.format(loan.outstanding)}. The extra won’t be '
+                      'tracked as credit.',
+                      style: const TextStyle(
+                          color: AppColors.danger, fontSize: 12.5),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: noteCtrl,
+                  decoration: const InputDecoration(
+                      labelText: 'Note (e.g. cash, bank)'),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: noteCtrl,
-              decoration:
-                  const InputDecoration(labelText: 'Note (e.g. cash, bank)'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Add')),
-        ],
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: invalid ? null : () => Navigator.pop(ctx, true),
+                  child: Text(over ? 'Add anyway' : 'Add')),
+            ],
+          );
+        },
       ),
     );
     if (result != true) return;
 
-    final amount = double.tryParse(amountCtrl.text.trim());
+    final amount = double.tryParse(amountCtrl.text.trim().replaceAll(',', ''));
     if (amount == null || amount <= 0) return;
 
     // Append-only: a new ledger row, never overwriting prior balance.
@@ -113,6 +147,16 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
     if (!await requireActive(context)) return;
     if (!mounted) return;
     final loan = _loan!;
+
+    // A reminder can't go anywhere without a usable number — say so plainly
+    // instead of letting the SMS stack fail with a generic error.
+    if (loan.phoneNumber.trim().length < 7) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'This customer has no valid phone number. Edit the customer to add one.'),
+      ));
+      return;
+    }
 
     // Recover gracefully if the OS revoked SMS access.
     if (!await _sms.hasPermission()) {
@@ -157,7 +201,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('SMS permission needed'),
         content: const Text(
-            'Qarzan sends reminders straight from your SIM, so it needs SMS '
+            '$kAppName sends reminders straight from your SIM, so it needs SMS '
             'permission. Enable it in app settings to continue.'),
         actions: [
           TextButton(
@@ -312,7 +356,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
 
         _card(Column(
           children: [
-            _infoRow('Date given', _df.format(loan.dateGiven)),
+            _infoRow('Added on', _df.format(loan.dateGiven)),
             _infoRow('Due date',
                 loan.dueDate == null ? '—' : _df.format(loan.dueDate!)),
             _infoRow(

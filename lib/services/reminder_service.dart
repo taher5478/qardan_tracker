@@ -81,7 +81,9 @@ Future<void> runReminderSweep() async {
 /// Sends an SMS to every account whose reminder is due right now. Shared by the
 /// background sweep and the on-launch catch-up. Returns counts; does not show a
 /// notification (callers decide how to report).
-Future<SweepResult> sendDueReminders() async {
+Future<SweepResult> sendDueReminders({
+  void Function(int done, int total)? onProgress,
+}) async {
   final db = DatabaseHelper.instance;
   final sms = SmsService();
   final now = DateTime.now();
@@ -100,11 +102,13 @@ Future<SweepResult> sendDueReminders() async {
     byCustomer.putIfAbsent(l.customerId, () => []).add(l);
   }
   final groups = byCustomer.values.toList();
+  onProgress?.call(0, groups.length);
 
   final rng = Random();
   var sent = 0;
   var failed = 0;
   for (var g = 0; g < groups.length; g++) {
+    onProgress?.call(g, groups.length);
     final loans = groups[g];
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
@@ -166,6 +170,7 @@ Future<SweepResult> sendDueReminders() async {
       await Future.delayed(Duration(seconds: gap));
     }
   }
+  onProgress?.call(groups.length, groups.length);
   return SweepResult(sent, failed);
 }
 

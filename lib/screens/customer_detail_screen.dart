@@ -94,8 +94,10 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     _load();
   }
 
+  // Archived accounts still owe money (archiving only stops reminders), so
+  // their balance stays in the customer's total — matching the home screen.
   double get _totalOutstanding =>
-      _loans.where((l) => l.isActive).fold(0.0, (s, l) => s + l.outstanding);
+      _loans.fold(0.0, (s, l) => s + l.outstanding);
 
   Future<void> _addCredit() async {
     if (!await requireActive(context)) return;
@@ -126,30 +128,47 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     final phoneCtrl = TextEditingController(text: c.phone);
     final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit customer'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-                controller: nameCtrl,
-                textCapitalization: TextCapitalization.words,
-                decoration: const InputDecoration(labelText: 'Name')),
-            const SizedBox(height: 12),
-            TextField(
-                controller: phoneCtrl,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Phone')),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Save')),
-        ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final name = nameCtrl.text.trim();
+          final phone = phoneCtrl.text.trim();
+          final nameInvalid = name.isEmpty;
+          // Reminders are sent by SMS, so a customer needs a usable number.
+          final phoneInvalid = phone.length < 7;
+          return AlertDialog(
+            title: const Text('Edit customer'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                    controller: nameCtrl,
+                    textCapitalization: TextCapitalization.words,
+                    onChanged: (_) => setLocal(() {}),
+                    decoration: const InputDecoration(labelText: 'Name')),
+                const SizedBox(height: 12),
+                TextField(
+                    controller: phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    onChanged: (_) => setLocal(() {}),
+                    decoration: InputDecoration(
+                        labelText: 'Phone',
+                        errorText: phone.isNotEmpty && phoneInvalid
+                            ? 'Enter a valid phone number'
+                            : null)),
+              ],
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: (nameInvalid || phoneInvalid)
+                      ? null
+                      : () => Navigator.pop(ctx, true),
+                  child: const Text('Save')),
+            ],
+          );
+        },
       ),
     );
     if (saved != true) return;

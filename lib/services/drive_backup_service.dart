@@ -61,6 +61,46 @@ class DriveBackupService {
     }
   }
 
+  /// Download the most recent backup from Drive and restore it. Returns a
+  /// human-readable result; never throws.
+  Future<String> restoreLatest() async {
+    final account = await _ensureSignedIn();
+    if (account == null) return 'Connect Google Drive first';
+
+    final client = await _googleSignIn.authenticatedClient();
+    if (client == null) return 'Google sign-in expired — reconnect';
+
+    try {
+      final api = drive.DriveApi(client);
+      final res = await api.files.list(
+        q: "name contains 'oweme_backup' and trashed=false",
+        spaces: 'drive',
+        orderBy: 'createdTime desc',
+        $fields: 'files(id,name)',
+        pageSize: 1,
+      );
+      final files = res.files;
+      if (files == null || files.isEmpty) {
+        return 'No backup found in Google Drive';
+      }
+
+      final media = await api.files.get(
+        files.first.id!,
+        downloadOptions: drive.DownloadOptions.fullMedia,
+      ) as drive.Media;
+
+      final bytes = <int>[];
+      await for (final chunk in media.stream) {
+        bytes.addAll(chunk);
+      }
+      return BackupService().restoreFromContent(utf8.decode(bytes));
+    } catch (_) {
+      return 'Couldn’t restore from Google Drive';
+    } finally {
+      client.close();
+    }
+  }
+
   Future<String> _findOrCreateFolder(drive.DriveApi api) async {
     final res = await api.files.list(
       q: "name='$_folderName' and "

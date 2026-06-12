@@ -16,7 +16,6 @@ class AppSettings {
 
   static const _kBusiness = 'businessName';
   static const _kCurrency = 'currencySymbol';
-  static const _kTemplate = 'smsTemplate';
   static const _kLock = 'lockEnabled';
   static const _kBiometric = 'biometricEnabled';
   static const _kPinHash = 'pinHash';
@@ -52,9 +51,6 @@ class AppSettings {
 
   String get currencySymbol =>
       _prefs?.getString(_kCurrency) ?? kCurrencySymbol;
-
-  String get smsTemplate =>
-      _prefs?.getString(_kTemplate) ?? kDefaultSmsTemplate;
 
   bool get lockEnabled => _prefs?.getBool(_kLock) ?? false;
 
@@ -117,9 +113,6 @@ class AppSettings {
 
   Future<void> setCurrencySymbol(String v) async =>
       _prefs?.setString(_kCurrency, v.trim().isEmpty ? kCurrencySymbol : v.trim());
-
-  Future<void> setSmsTemplate(String v) async => _prefs?.setString(
-      _kTemplate, v.trim().isEmpty ? kDefaultSmsTemplate : v.trim());
 
   Future<void> setBiometricEnabled(bool v) async =>
       _prefs?.setBool(_kBiometric, v);

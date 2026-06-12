@@ -196,11 +196,52 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// Catch-up: send reminders the (possibly killed) background task missed.
+  /// Sending paces messages several seconds apart, so this shows live progress
+  /// rather than freezing the UI with no feedback.
   Future<void> _sendDueNow() async {
     if (!await requireActive(context)) return;
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    final res = await sendDueReminders();
+    final progress = ValueNotifier<String>('Preparing…');
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      // canPop: false also blocks the system back button — if the dialog were
+      // dismissed mid-send, the pop below would pop the home screen instead.
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.5)),
+              const SizedBox(width: 18),
+              Expanded(
+                child: ValueListenableBuilder<String>(
+                  valueListenable: progress,
+                  builder: (_, text, child) => Text(text),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final res = await sendDueReminders(
+      onProgress: (done, total) {
+        // `done` counts completed customers; show the one being sent now.
+        final current = done < total ? done + 1 : total;
+        progress.value =
+            total == 0 ? 'No reminders due' : 'Sending $current of $total…';
+      },
+    );
+
+    if (mounted) Navigator.of(context, rootNavigator: true).pop(); // close dialog
+    progress.dispose();
     if (!mounted) return;
     messenger.showSnackBar(SnackBar(
       content: Text(res.total == 0

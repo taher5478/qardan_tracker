@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../constants.dart';
 import '../db/database_helper.dart';
 import '../models/loan.dart';
 
@@ -48,9 +49,33 @@ class BackupService {
           ]),
     ];
 
-    final csv = const ListToCsvConverter().convert(rows);
-    final path = await _writeTemp('ledger_${_stamp()}.csv', csv);
-    await Share.shareXFiles([XFile(path)], text: 'Qarzan ledger export');
+    final ledgerCsv = const ListToCsvConverter().convert(rows);
+    final ledgerPath = await _writeTemp('ledger_${_stamp()}.csv', ledgerCsv);
+
+    // Second file: the per-payment audit trail (date, amount, note) a credit
+    // manager needs for reconciliation or to show a customer proof of payment.
+    final payments = await _db.getAllPaymentsDetailed();
+    final dfTime = DateFormat('yyyy-MM-dd HH:mm');
+    final paymentRows = <List<dynamic>>[
+      ['Customer', 'Phone', 'Reference', 'Date', 'Amount', 'Note'],
+      ...payments.map((p) => [
+            p['customerName'] ?? '',
+            p['customerPhone'] ?? '',
+            p['reference'] ?? '',
+            dfTime.format(
+                DateTime.fromMillisecondsSinceEpoch(p['paidAt'] as int)),
+            (p['amount'] as num).toStringAsFixed(2),
+            p['note'] ?? '',
+          ]),
+    ];
+    final paymentsCsv = const ListToCsvConverter().convert(paymentRows);
+    final paymentsPath =
+        await _writeTemp('payments_${_stamp()}.csv', paymentsCsv);
+
+    await Share.shareXFiles(
+      [XFile(ledgerPath), XFile(paymentsPath)],
+      text: '$kAppName ledger export',
+    );
   }
 
   /// Build the full backup as a JSON string (shared by file export and the
@@ -91,6 +116,13 @@ class BackupService {
         ? utf8.decode(file.bytes!)
         : await File(file.path!).readAsString();
 
+    return restoreFromContent(content);
+  }
+
+  /// Validate and apply a backup from its raw JSON [content]. Shared by the
+  /// file picker and the Google Drive restore path. Returns a human-readable
+  /// result; throws nothing the UI must catch.
+  Future<String> restoreFromContent(String content) async {
     final Map<String, dynamic> payload;
     try {
       payload = jsonDecode(content) as Map<String, dynamic>;
@@ -98,7 +130,14 @@ class BackupService {
       return 'That file is not a valid backup';
     }
     if (payload['app'] != 'qarzan_tracker' || payload['tables'] == null) {
-      return 'That file is not a Qarzan backup';
+      return 'That file is not a $kAppName backup';
+    }
+    // Refuse a backup written by a newer app version with a format we don't
+    // understand yet, rather than silently restoring garbage.
+    final version = (payload['backupVersion'] as num?)?.toInt() ?? 1;
+    if (version > _backupVersion) {
+      return 'This backup was made by a newer version of $kAppName. '
+          'Please update the app first.';
     }
 
     await _db.restoreAll(payload['tables'] as Map<String, dynamic>);

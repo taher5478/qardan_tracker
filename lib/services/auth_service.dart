@@ -1,5 +1,7 @@
 import 'package:local_auth/local_auth.dart';
 
+import '../constants.dart';
+
 /// Thin wrapper over device biometrics. PIN handling lives in [AppSettings];
 /// this only covers fingerprint/face.
 class AuthService {
@@ -20,7 +22,7 @@ class AuthService {
   Future<bool> authenticate() async {
     try {
       return await _auth.authenticate(
-        localizedReason: 'Unlock Qarzan Tracker',
+        localizedReason: 'Unlock $kAppName',
         options: const AuthenticationOptions(
           stickyAuth: true,
           biometricOnly: true,
