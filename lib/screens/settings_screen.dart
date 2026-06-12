@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../constants.dart';
 
 import '../services/account_service.dart';
+import '../services/alarm_service.dart';
 import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/drive_backup_service.dart';
@@ -266,6 +267,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
       await _settings.setForegroundEnabled(true);
+      // Upgrade the AlarmManager watchdog to exact, doze-piercing alarms
+      // (needs a user grant on Android 14+).
+      await AlarmReminderService.requestExactAndReschedule();
     } else {
       await ForegroundReminderService.stop();
       await _settings.setForegroundEnabled(false);

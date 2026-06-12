@@ -6,6 +6,7 @@ import 'constants.dart';
 import 'screens/home_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'services/alarm_service.dart';
 import 'services/drive_backup_service.dart';
 import 'services/foreground_service.dart';
 import 'services/license_service.dart';
@@ -33,6 +34,11 @@ Future<void> main() async {
 
   // Permissions are requested in onboarding (with context), not cold at launch.
   await scheduleReminders();
+
+  // AlarmManager watchdog: system-delivered, so it wakes the app and revives
+  // the reminder pipeline even after an OEM kills the service and WorkManager.
+  await AlarmReminderService.init();
+  await AlarmReminderService.schedule();
 
   // Re-start the persistent service if the owner had opted in.
   if (AppSettings.instance.foregroundEnabled) {

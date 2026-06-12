@@ -43,6 +43,16 @@ class _ReminderTaskHandler extends TaskHandler {
   }
 
   @override
+  void onNotificationDismissed() {
+    // Re-post immediately when the user swipes the notification away, instead
+    // of leaving the service invisible until the next 15-min repeat.
+    FlutterForegroundTask.updateService(
+      notificationTitle: _notifTitle,
+      notificationText: _notifText,
+    );
+  }
+
+  @override
   Future<void> onDestroy(DateTime timestamp) async {}
 }
 

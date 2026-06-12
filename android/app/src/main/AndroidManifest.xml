@@ -16,6 +16,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- Ask the user to exempt the app from battery optimization -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- AlarmManager watchdog: exact, doze-piercing alarms (user-granted on 14+) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
 
     <application
         android:label="OweMe"
@@ -49,6 +51,24 @@
             android:foregroundServiceType="dataSync"
             android:exported="false"
             android:stopWithTask="false" />
+
+        <!-- AlarmManager watchdog (android_alarm_manager_plus): system-delivered
+             alarms that wake the app even after the OS/OEM kills it -->
+        <service
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false"/>
+        <receiver
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"
+            android:exported="false"/>
+        <receiver
+            android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
+            android:enabled="false"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+            </intent-filter>
+        </receiver>
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
