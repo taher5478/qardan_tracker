@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../constants.dart';
 import '../db/database_helper.dart';
 import '../models/loan.dart';
+import '../models/reminder_log.dart';
+import '../models/sms_template.dart';
 import '../services/settings_service.dart';
+import '../services/sms_service.dart';
 import '../theme/app_theme.dart';
 import '../ui/common.dart';
 
@@ -49,6 +53,16 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
   bool _dueDateError = false;
   late int _reminderDays;
 
+  // Message-preview state: the customer's assigned template (null = default)
+  // and whether the user picked a different one in this screen.
+  List<SmsTemplate> _templates = const [];
+  int? _templateId;
+  bool _templateTouched = false;
+
+  // Open credits this customer already has — shown so the owner knows the
+  // reminder SMS combines all of them into one message.
+  int _otherOpenCredits = 0;
+
   final _amountFocus = FocusNode();
 
   static const _cadence = {
@@ -79,11 +93,36 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
     _dueDate = l?.dueDate;
     _reminderDays = l?.reminderIntervalDays ?? 7;
 
+    _templateId = l?.templateId;
+    _loadContext();
+
     if (!_isEditing) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _amountFocus.requestFocus();
       });
     }
+  }
+
+  /// Load templates (for the preview) and the customer's existing template /
+  /// open-credit count, so the screen can explain exactly what will happen.
+  Future<void> _loadContext() async {
+    final templates = await _db.getTemplates();
+    final customerId = widget.loan?.customerId ?? widget.customerId;
+    int? assigned = _templateId;
+    var others = 0;
+    if (customerId != null) {
+      assigned ??= (await _db.getCustomer(customerId))?.templateId;
+      others = (await _db.getLoansForCustomer(customerId))
+          .where((l) =>
+              l.isActive && !l.isSettled && l.id != widget.loan?.id)
+          .length;
+    }
+    if (!mounted) return;
+    setState(() {
+      _templates = templates;
+      _templateId ??= assigned;
+      _otherOpenCredits = others;
+    });
   }
 
   @override
@@ -120,11 +159,15 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
         lastReminderAt: base.lastReminderAt,
         isActive: base.isActive,
       ));
+      await _applyTemplateChoice(base.customerId);
     } else {
       final customerId = widget.customerId ??
           await _db.findOrCreateCustomer(
               _name.text.trim(), _phone.text.trim());
-      await _db.insertLoan(Loan(
+      // First credit ever? Offer a test send after saving, so the owner sees
+      // exactly what their customer receives.
+      final isFirstRecord = (await _db.getAllLoans()).isEmpty;
+      final loanId = await _db.insertLoan(Loan(
         customerId: customerId,
         reference: _reference.text.trim(),
         principal: double.parse(_principal.text.trim()),
@@ -133,10 +176,167 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
         note: _note.text.trim(),
         reminderIntervalDays: _reminderDays,
       ));
+      await _applyTemplateChoice(customerId);
+      if (isFirstRecord && mounted) await _offerFirstSend(loanId);
     }
 
     if (!mounted) return;
     Navigator.of(context).pop(true);
+  }
+
+  /// Persist a template picked in the preview — it's a per-customer setting.
+  Future<void> _applyTemplateChoice(int customerId) async {
+    if (!_templateTouched) return;
+    final c = await _db.getCustomer(customerId);
+    if (c == null) return;
+    await _db.updateCustomer(_templateId == null
+        ? c.copyWith(clearTemplate: true)
+        : c.copyWith(templateId: _templateId));
+  }
+
+  /// One-time onboarding moment: after the very first credit is saved, offer
+  /// to send the reminder right away so the owner sees how reminders work.
+  Future<void> _offerFirstSend(int loanId) async {
+    final send = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your first credit is saved 🎉'),
+        content: const Text(
+            'Want to send the reminder SMS now? You’ll see exactly what your '
+            'customer receives — after this, reminders go out automatically '
+            'on schedule.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Later')),
+          FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.sms_outlined, size: 18),
+              label: const Text('Send now')),
+        ],
+      ),
+    );
+    if (send != true || !mounted) return;
+
+    final sms = SmsService();
+    if (!await sms.hasPermission() && !await sms.requestPermission()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('SMS permission needed — reminder not sent.')));
+      }
+      return;
+    }
+
+    final loan = await _db.getLoan(loanId);
+    if (loan == null) return;
+    final now = DateTime.now();
+    final ok = await sms.sendReminder(loan);
+    await _db.insertReminderLog(ReminderLog(
+      loanId: loanId,
+      debtorName: loan.debtorName,
+      phoneNumber: loan.phoneNumber,
+      amount: loan.outstanding,
+      sentAt: now,
+      success: ok,
+    ));
+    if (ok) await _db.markReminderSent(loanId, now.millisecondsSinceEpoch);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      duration: const Duration(seconds: 4),
+      content: Text(ok
+          ? 'Sent from your SIM — check your Messages app to see it.'
+          : 'Couldn’t send. You can try from the account screen any time.'),
+    ));
+  }
+
+  // --- Reminder transparency helpers ---------------------------------------
+
+  String get _templateName {
+    final match = _templates.where((t) => t.id == _templateId);
+    if (match.isNotEmpty) return match.first.name;
+    final def = _templates.where((t) => t.isDefault);
+    return def.isEmpty ? 'Default' : def.first.name;
+  }
+
+  String get _templateBody {
+    final match = _templates.where((t) => t.id == _templateId);
+    if (match.isNotEmpty) return match.first.body;
+    final def = _templates.where((t) => t.isDefault);
+    return def.isEmpty ? kDefaultSmsTemplate : def.first.body;
+  }
+
+  /// The exact SMS the customer would receive, rendered from live form values.
+  String get _previewMessage {
+    final name = _name.text.trim().isEmpty
+        ? (widget.loan?.customerName ?? widget.initialName ?? 'Customer')
+        : _name.text.trim();
+    final principal = double.tryParse(_principal.text.trim()) ??
+        widget.loan?.principal ??
+        0;
+    return SmsService.render(
+      Loan(
+        customerId: 0,
+        reference: _reference.text.trim(),
+        principal: principal,
+        amountPaid: widget.loan?.amountPaid ?? 0,
+        dateGiven: _dateGiven,
+        dueDate: _dueDate,
+        customerName: name.isEmpty ? 'Customer' : name,
+      ),
+      template: _templateBody,
+    );
+  }
+
+  /// Plain-words answer to "when will messages actually go out?".
+  String _scheduleHint() {
+    if (_reminderDays == 0) {
+      return 'No automatic reminders — you can still send one manually any time.';
+    }
+    final every =
+        _reminderDays == 1 ? 'every day' : 'every $_reminderDays days';
+    final base = _dueDate == null
+        ? 'First SMS goes out on the due date, then $every until paid.'
+        : 'First SMS on ${DateFormat.yMMMd().format(_dueDate!)} (the due date), '
+            'then $every until paid.';
+    if (_otherOpenCredits > 0) {
+      final n = _otherOpenCredits;
+      return '$base This customer’s $n other open credit'
+          '${n == 1 ? '' : 's'} will be combined into the same SMS.';
+    }
+    return base;
+  }
+
+  Future<void> _pickTemplate() async {
+    final chosen = await showModalBottomSheet<Object?>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Reminder template for this customer',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
+            for (final t in _templates)
+              ListTile(
+                leading: Icon(
+                    t.isDefault ? Icons.star_outline : Icons.sms_outlined),
+                title: Text(t.name + (t.isDefault ? ' (default)' : '')),
+                subtitle: Text(t.body,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                selected: _templateId == null ? t.isDefault : t.id == _templateId,
+                onTap: () => Navigator.pop(ctx, t.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null) return;
+    setState(() {
+      _templateId = chosen as int;
+      _templateTouched = true;
+    });
   }
 
   Future<void> _pickDueDate() async {
@@ -191,6 +391,7 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
                 style: AppTheme.money(size: 26, color: AppColors.ink),
+                onChanged: (_) => setState(() {}), // refresh message preview
                 decoration: InputDecoration(
                     prefixText: '${AppSettings.instance.currencySymbol}  ',
                     hintText: '0'),
@@ -243,6 +444,7 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
             _label('Invoice / reference (optional)'),
             TextFormField(
               controller: _reference,
+              onChanged: (_) => setState(() {}), // refresh message preview
               decoration: const InputDecoration(hintText: 'e.g. INV-102'),
             ),
             const SizedBox(height: 24),
@@ -269,7 +471,63 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
                 );
               }).toList(),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
+
+            // Plain-words schedule: exactly when SMS will go out.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline,
+                    size: 15, color: AppColors.muted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(_scheduleHint(),
+                      style: const TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 12.5,
+                          height: 1.35)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            if (_reminderDays > 0) ...[
+              Row(
+                children: [
+                  _label('Message preview'),
+                  const SizedBox(width: 4),
+                  Tooltip(
+                    message:
+                        'Templates can be edited in\nSettings → Manage Message templates',
+                    triggerMode: TooltipTriggerMode.tap,
+                    child: Icon(Icons.info_outline,
+                        size: 15, color: AppColors.muted),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _templates.isEmpty ? null : _pickTemplate,
+                    style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8)),
+                    icon: const Icon(Icons.swap_horiz, size: 16),
+                    label: Text(_templateName,
+                        style: const TextStyle(fontSize: 12.5)),
+                  ),
+                ],
+              ),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.sage.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(AppRadius.field),
+                  border: Border.all(color: AppColors.hairline),
+                ),
+                child: Text(_previewMessage,
+                    style: const TextStyle(fontSize: 12.5, height: 1.45)),
+              ),
+              const SizedBox(height: 12),
+            ],
 
             Theme(
               data:
