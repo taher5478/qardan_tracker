@@ -529,26 +529,14 @@ class _EditLoanScreenState extends State<EditLoanScreen> {
               const SizedBox(height: 12),
             ],
 
-            Theme(
-              data:
-                  Theme.of(context).copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(top: 4, bottom: 8),
-                title: const Text('More details',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w600, color: AppColors.pine)),
-                children: [
-                  TextFormField(
-                    controller: _note,
-                    maxLines: 2,
-                    decoration:
-                        const InputDecoration(hintText: 'Note (optional)'),
-                  ),
-                ],
-              ),
+            _label('Note (optional)'),
+            TextFormField(
+              controller: _note,
+              maxLines: 2,
+              decoration:
+                  const InputDecoration(hintText: 'e.g. for shop renovation'),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _save,
               icon: const Icon(Icons.check),
